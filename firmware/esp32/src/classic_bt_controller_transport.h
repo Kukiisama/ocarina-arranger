@@ -106,6 +106,8 @@ class ClassicBtControllerTransport : public ControllerTransport {
   uint8_t lastPeerAddress_[6] = {};
   bool hasPeerAddress_ = false;
   bool hasReconnectablePeer_ = false;
+  uint32_t lastAutoRecoveryMs_ = 0;  // 上次自动重启蓝牙栈的时刻
+  bool resetting_ = false;           // 正在拆/重建蓝牙栈，期间禁止发送
   bool reconnectLastPeerOnRegister_ = false;
   uint32_t ignoredReportCount_ = 0;
   uint8_t lastIgnoredReportId_ = 0;

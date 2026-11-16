@@ -56,7 +56,10 @@ constexpr uint16_t kReleaseMinWindowMs = 40;
 constexpr const char *kBluetoothTimingProfile = "switch2";
 // Switch 2 is still under characterization, so keep its idle/report cadence
 // conservative until we understand its Classic BT pairing behavior better.
-constexpr uint16_t kHidCongestionRetryBudgetMs = 800;
+// 显式输入期间，主机可能在 sniff/active 之间来回切换（日志里的 mode 2 ⇄ mode 0），
+// 一个 sniff 时隙可能长到 1.28s。原先 800ms 的重试预算撑不过去，会把整条命令判失败，
+// 表现为演奏中途 controller input report failed。放宽到 3 秒（单次发送超时仍保持 400ms）。
+constexpr uint16_t kHidCongestionRetryBudgetMs = 3000;
 constexpr uint16_t kHidCongestionRetryDelayMs = 120;
 constexpr uint16_t kSendTaskStartupDelayMs = 1000;
 constexpr uint16_t kPostOpenReportQuietMs = 1000;
@@ -123,6 +126,8 @@ constexpr uint16_t kSniffPrewarmGapMs = 0;
 constexpr uint16_t kSniffPrewarmSettleMs = 0;
 #endif
 constexpr uint16_t kExplicitInputDrainBudgetMs = 100;
+constexpr uint32_t kAutoRecoveryNoAckMs = 2500;
+constexpr uint32_t kAutoRecoveryCooldownMs = 15000;
 constexpr uint16_t kIdleDisconnectedReportIntervalMs = 100;
 constexpr uint16_t kReliableInputCongestionRetryBudgetMs =
     kHidCongestionRetryBudgetMs > 300 ? kHidCongestionRetryBudgetMs : 300;
@@ -687,6 +692,18 @@ void ClassicBtControllerTransport::setLeftStickFromVector(int x, int y) {
 }
 
 void ClassicBtControllerTransport::updateInputReport() {
+  // 递归锁：sendCurrentInputReport 已在锁内调用时不会自锁，
+  // 其它调用点（按键路径、clearInputs）也能保证写入是原子的。
+  // 带超时的 try-take：拿不到锁（发送路径正在用）就跳过本次刷新。
+  // 绝不能用 portMAX_DELAY——拆蓝牙栈时发送任务可能攥着锁等一个永不到来的回调，
+  // 那样主任务会永久阻塞，表现为「固件沉默、播放超时、之后点什么都没反应」。
+  bool lockHeld = false;
+  if (inputReportSendMutex_ != nullptr) {
+    lockHeld = xSemaphoreTakeRecursive(inputReportSendMutex_, pdMS_TO_TICKS(20)) == pdTRUE;
+    if (!lockHeld) {
+      return;
+    }
+  }
   report30_[0] = timer_;
   report30_[2] = buttonsRight_;
   report30_[3] = buttonsShared_;
@@ -694,11 +711,15 @@ void ClassicBtControllerTransport::updateInputReport() {
   report30_[5] = static_cast<uint8_t>((leftStickX_ << 4) & 0xF0);
   report30_[6] = static_cast<uint8_t>((leftStickX_ & 0xF0) >> 4);
   report30_[7] = leftStickY_;
+  // 右摇杆：12 位定点，中位 0x800。经实测（每 6 秒轮换候选的对照实验），
+  // 这套打包能让视角静止；之前的「视角自转」是因为写入了别的组合。
   report30_[8] = static_cast<uint8_t>((rightStickX_ << 4) & 0xF0);
   report30_[9] = static_cast<uint8_t>((rightStickX_ & 0xF0) >> 4);
   report30_[10] = rightStickY_;
-
   dummyReport_[0] = timer_;
+  if (lockHeld) {
+    xSemaphoreGiveRecursive(inputReportSendMutex_);
+  }
 }
 
 void ClassicBtControllerTransport::logInputReport(const char *command, const char *phase) const {
@@ -772,6 +793,19 @@ void ClassicBtControllerTransport::sendTaskTrampoline(void *param) {
   while (true) {
     if (!transport->explicitInputActive_ && !transport->shouldDelayInputReports()) {
       transport->sendCurrentInputReport(false);
+    }
+    // 自动自愈：主机空闲后会切进 sniff 省电模式，之后我们的报告收不到确认，
+    // 表现为「连按几下之后全部 controller input report failed」且永久不恢复。
+    // 这里用「距上次被主机 ACK 超过 2.5 秒」判定链路已死，直接重启蓝牙栈并回连
+    // （等价于手动发 BT RESET LAST-PEER），冷却 15 秒避免反复重启。
+    if (transport->connected_ && transport->lastInputReportAcceptedMs_ != 0 &&
+        millis() - transport->lastInputReportAcceptedMs_ > kAutoRecoveryNoAckMs &&
+        millis() - transport->lastAutoRecoveryMs_ > kAutoRecoveryCooldownMs) {
+      transport->lastAutoRecoveryMs_ = millis();
+      Serial.printf("WARN bt auto-recovery reason=no_ack_ms=%lu\n",
+                    static_cast<unsigned long>(millis() - transport->lastInputReportAcceptedMs_));
+      transport->resetConnection(true);
+      transport->lastInputReportAcceptedMs_ = millis();
     }
     if (kUseFixedSendInterval) {
       vTaskDelay(pdMS_TO_TICKS(kFixedSendTaskIntervalMs));
@@ -949,6 +983,7 @@ bool ClassicBtControllerTransport::resetConnection(bool reconnectLastPeer) {
       "INFO bt reset requested mode=stack-restart reconnect_last_peer=%s\n",
       boolName(shouldReconnectLastPeer));
 
+  resetting_ = true;  // 拆栈期间让发送任务别再碰协议栈
   shutdownClassicBluetooth();
 
   clearInputs();
@@ -956,9 +991,11 @@ bool ClassicBtControllerTransport::resetConnection(bool reconnectLastPeer) {
 
   if (!initializeClassicBluetooth()) {
     reconnectLastPeerOnRegister_ = false;
+    resetting_ = false;
     Serial.printf("WARN bt reset restart failed step=%s err=%s\n", initStep_, initError_);
     return false;
   }
+  resetting_ = false;
 
   Serial.printf(
       "INFO bt reset completed mode=stack-restart reconnect_last_peer=%s\n",
@@ -1178,6 +1215,9 @@ bool ClassicBtControllerTransport::isControllerInputReady() const {
 }
 
 bool ClassicBtControllerTransport::sendCurrentInputReport(bool logFailure, bool waitForSendEvent) {
+  if (resetting_) {
+    return false;  // 正在重建蓝牙栈，跳过，避免访问已释放的协议栈
+  }
   readyForReports_ = isHidReportChannelOpen();
 
   if (!readyForReports_) {
@@ -1190,8 +1230,6 @@ bool ClassicBtControllerTransport::sendCurrentInputReport(bool logFailure, bool 
     return false;
   }
 
-  updateInputReport();
-
   const bool shouldWaitForSendEvent = waitForSendEvent && paired_;
   uint32_t expectedEventCount = 0;
   const bool shouldSendFullReport = connected_ || paired_;
@@ -1203,6 +1241,7 @@ bool ClassicBtControllerTransport::sendCurrentInputReport(bool logFailure, bool 
   }
 
   reportCongested_ = false;
+  updateInputReport();  // 在锁内重建报告，避免与按键路径撕裂
   const esp_err_t err = esp_bt_hid_device_send_report(
       ESP_HIDD_REPORT_TYPE_INTRDATA,
       0x30,
@@ -1415,6 +1454,17 @@ bool ClassicBtControllerTransport::repeatCurrentInputReportUs(
           delay(kHidCongestionRetryDelayMs);
           continue;
         }
+      }
+
+      // 自愈：按键期间空闲任务不跑，链路死了没人救，这里补一次检查。
+      if (connected_ && lastInputReportAcceptedMs_ != 0 &&
+          millis() - lastInputReportAcceptedMs_ > kAutoRecoveryNoAckMs &&
+          millis() - lastAutoRecoveryMs_ > kAutoRecoveryCooldownMs) {
+        lastAutoRecoveryMs_ = millis();
+        Serial.printf("WARN bt auto-recovery reason=no_ack_ms=%lu during=input\n",
+                      static_cast<unsigned long>(millis() - lastInputReportAcceptedMs_));
+        resetConnection(true);
+        lastInputReportAcceptedMs_ = millis();
       }
 
       return false;
@@ -1815,6 +1865,8 @@ void ClassicBtControllerTransport::handleHidEvent(int event, void *rawParam) {
           hasReconnectablePeer_ = false;
         }
         esp_bt_gap_set_scan_mode(ESP_BT_NON_CONNECTABLE, ESP_BT_NON_DISCOVERABLE);
+        // 连接瞬间先把按键/摇杆归位，避免把上一轮的残留状态发给主机
+        clearInputs();
         ensureSendTask();
         if (!shouldDelayInputReports()) {
           sendCurrentInputReport(false);
