@@ -1,0 +1,112 @@
+{
+  "name": "oot-ocarina-arranger",
+  "description": "时之笛乐谱编排器与演奏器",
+  "author": "ocarina",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/apps/desktop/src/electron/main.js",
+  "scripts": {
+    "dev": "tsx apps/desktop/src/index.ts",
+    "ui:dev": "tsx apps/desktop/src/web/server.ts",
+    "test:desktop": "node --import tsx --test apps/desktop/test/*.test.ts",
+    "ci:local": "bash scripts/ci-local.sh",
+    "ci:local:quick": "bash scripts/ci-local.sh --skip-firmware",
+    "start:mac": "bash scripts/macos-launch.sh",
+    "build": "tsc -p tsconfig.json && node scripts/copy-web-static.mjs",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "electron:dev": "npm run build && electron .",
+    "pack": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:win": "npm run dist:win:x64",
+    "dist:win:x64": "npm run build && electron-builder --win --x64",
+    "postinstall": "patch-package"
+  },
+  "build": {
+    "appId": "com.ocarina.arranger",
+    "productName": "Ocarina Arranger",
+    "electronDist": "node_modules/electron/dist",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "build/icon.png",
+        "to": "icon.png"
+      },
+      {
+        "from": "firmware/esp32",
+        "to": "firmware/esp32",
+        "filter": [
+          "**/*",
+          "!**/.pio/**"
+        ]
+      }
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "**/*.node",
+      "node_modules/serialport/**",
+      "node_modules/@serialport/**",
+      "node_modules/sharp/**",
+      "node_modules/@img/**"
+    ],
+    "npmRebuild": false,
+    "buildDependenciesFromSource": false,
+    "mac": {
+      "icon": "build/icon.icns",
+      "category": "public.app-category.utilities",
+      "hardenedRuntime": true,
+      "forceCodeSigning": true,
+      "notarize": true,
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "win": {
+      "icon": "build/icon.ico",
+      "artifactName": "${productName}-${version}-win-${arch}.${ext}",
+      "extraResources": [
+        {
+          "from": "drivers/windows",
+          "to": "drivers/windows"
+        }
+      ],
+      "target": [
+        "nsis"
+      ]
+    },
+    "linux": {
+      "icon": "build/icons"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "时之笛 · 乐谱编排器"
+    }
+  },
+  "dependencies": {
+    "@serialport/parser-readline": "^13.0.0",
+    "image-q": "^4.0.0",
+    "serialport": "^13.0.0",
+    "sharp": "^0.34.3",
+    "tar": "^7.5.13"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.15",
+    "electron": "^41.4.0",
+    "electron-builder": "^26.8.1",
+    "patch-package": "^8.0.1",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3"
+  }
+}

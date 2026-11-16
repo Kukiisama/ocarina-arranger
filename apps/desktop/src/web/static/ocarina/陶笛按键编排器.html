@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<link rel="icon" href="icon.png" />
+<title>时之笛 · 乐谱编排器&amp;演奏器</title>
+<link rel="stylesheet" href="陶笛按键编排器.css" />
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <div>
+        <h1>时之笛 · 乐谱编排器&amp;演奏器</h1>
+        <p class="sub">琴键单击只试听　·　在钢琴卷格子上放音符 → 输出手柄键位</p>
+      </div>
+    </div>
+    <div class="tools">
+      <button class="tool on" id="btnSound" title="开关声音">🔊 声音</button>
+      <button class="tool" id="btnUndo" title="撤销上一步">↶ 撤销</button>
+      <button class="tool" id="btnClear" title="清空全部">清空</button>
+      <span class="tsep"></span>
+      <button class="tool" id="btnCopy" title="复制整条键位序列">⧉ 复制</button>
+      <button class="tool" id="btnPaste" title="粘贴序列（键位链 / 音名 / JSON）">📋 粘贴</button>
+      <button class="tool" id="btnExport" title="导出乐谱文件">⇩ 导出</button>
+      <button class="tool" id="btnImport" title="导入乐谱（JSON / 文本 / MIDI）">⇧ 导入</button>
+      <input type="file" id="fileInput" accept=".json,.txt,.mid,.midi,application/json,text/plain,audio/midi" hidden />
+    </div>
+  </header>
+
+  <nav class="tabbar" id="tabbar">
+    <button class="tabBtn on" data-view="score">曲谱编排</button>
+    <button class="tabBtn" data-view="device">设备与测试</button>
+    <button class="tabBtn" data-view="flash">固件刷入</button>
+  </nav>
+
+  <section class="view" data-view="score">
+
+  <div class="timingbar">
+    <span class="tb-title">⏱ 节奏</span>
+    <label class="tb-field">BPM
+      <input id="bpm" type="number" min="30" max="300" step="1" value="120" />
+    </label>
+    <label class="tb-field">每格
+      <select id="grid">
+        <option value="4">4 分音符</option>
+        <option value="8" selected>8 分音符</option>
+        <option value="16">16 分音符</option>
+        <option value="32">32 分音符</option>
+      </select>
+    </label>
+    <label class="tb-field">新音长
+      <select id="lenSel">
+        <option value="1" selected>1 格</option>
+        <option value="2">2 格</option>
+        <option value="4">4 格</option>
+        <option value="8">8 格</option>
+        <option value="16">16 格</option>
+      </select>
+    </label>
+    <span class="tb-info" id="tbInfo">每格 141ms</span>
+    <span class="tb-spacer"></span>
+    <button class="tool" id="btnCopyCmd" title="复制生成的演奏命令">⧉ 复制命令</button>
+  </div>
+
+  <main class="stage">
+    <section class="keyboard">
+      <div class="colhead"><span>琴键</span><span class="tag">单击试听</span></div>
+      <div class="keypad"><span>音名 · 键位</span></div>
+      <div class="keys" id="keys"></div>
+    </section>
+
+    <section class="rollwrap">
+      <div class="colhead"><span>钢琴卷</span><span class="tag" id="colTag">16 格 · 左键写 · 右键删 · 滚轮左右滚</span></div>
+      <div class="roll" id="roll">
+        <div class="ruler" id="ruler"></div>
+        <div class="rollInner" id="rollInner">
+          <div class="emptyTip" id="emptyTip">在格子上点一下放音符<br /><span style="font-size:11px;color:#4d5a6c">左键写音符 · 右键删音符 · 写满最后一列会自动再加 16 格</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="colhead">
+        <span>输出</span>
+        <div class="seg" id="panelTabs">
+          <button class="seg-btn on" data-tab="keys">键位</button>
+          <button class="seg-btn" data-tab="cmd">命令</button>
+        </div>
+        <span class="count" id="count">0 个音</span>
+      </div>
+      <div class="list" id="list"></div>
+      <pre class="cmdview" id="cmdview" hidden></pre>
+      <div class="panelFoot">
+        <button class="tool" id="btnHome" title="回到第 1 列，从头试听（快捷键 Home）">⤒ 回到开头</button>
+        <button class="tool wide" id="btnPlay">▶ 试听</button>
+        <button class="tool on" id="btnPerform" title="把当前谱面发送到开发板演奏">▶ 演奏</button>
+        <button class="tool stop" id="btnStopPerform" title="停止演奏" disabled>■ 停止</button>
+      </div>
+    </section>
+  </main>
+
+  <div class="footerNote">
+    电脑键盘试听：A W S E D F T G Y H U J K O L P ;（由低到高）　·　Home 回到第 1 列　·　钢琴卷：左键写音符、右键删音符、滚轮左右滚动、写满第 16 列自动再加 16 格　·　同一音有两种按法时，点输出面板里的键位可切换
+  </div>
+  </section>
+
+  <section class="view" data-view="device" hidden>
+    <div class="deviceGrid">
+      <section class="deviceCard">
+        <div class="deviceHead"><span>串口与测试</span><span class="devStatus" id="devStatus">未连接</span></div>
+        <div class="deviceRow">
+          <select id="devPort"><option value="">未检测到串口</option></select>
+          <button class="tool" id="devRefresh">刷新</button>
+        </div>
+        <div class="deviceRow">
+          <button class="tool on" id="devConnect">连接</button>
+          <button class="tool" id="devDisconnect">断开</button>
+          <button class="tool" id="devResetBt">重置蓝牙</button>
+        </div>
+        <div class="padGrid" id="devPads">
+          <button class="padBtn" data-cmd="BTN A">A</button>
+          <button class="padBtn" data-cmd="BTN B">B</button>
+          <button class="padBtn" data-cmd="BTN X">X</button>
+          <button class="padBtn" data-cmd="BTN Y">Y</button>
+          <button class="padBtn" data-cmd="BTN L">L</button>
+          <button class="padBtn" data-cmd="BTN R">R</button>
+          <button class="padBtn" data-cmd="BTN ZL">ZL</button>
+          <button class="padBtn" data-cmd="BTN ZR">ZR</button>
+          <button class="padBtn" data-cmd="BTN DUP">↑</button>
+          <button class="padBtn" data-cmd="BTN DDOWN">↓</button>
+          <button class="padBtn" data-cmd="BTN DLEFT">←</button>
+          <button class="padBtn" data-cmd="BTN DRIGHT">→</button>
+          <button class="padBtn" data-cmd="BTN PLUS">＋</button>
+          <button class="padBtn" data-cmd="BTN MINUS">－</button>
+          <button class="padBtn" data-cmd="BTN HOME">HOME</button>
+          <button class="padBtn" data-cmd="BTN CAPTURE">CAPTURE</button>
+          <button class="padBtn" data-cmd="BTN LS">LS</button>
+          <button class="padBtn" data-cmd="BTN RS">RS</button>
+          <button class="padBtn" data-cmd="BTN L+R">L+R</button>
+          <button class="padBtn" data-cmd="STICK 0 1 300">摇杆上</button>
+          <button class="padBtn" data-cmd="STICK 0 -1 300">摇杆下</button>
+          <button class="padBtn" data-cmd="STICK -1 0 300">摇杆左</button>
+          <button class="padBtn" data-cmd="STICK 1 0 300">摇杆右</button>
+        </div>
+
+        <div class="devSubHead">陶笛试音（L 键 5 档，按住 300ms）</div>
+        <div class="padGrid padGrid5" id="devNotes">
+          <button class="padBtn" data-cmd="NOTE L -2 300">档 -2</button>
+          <button class="padBtn" data-cmd="NOTE L -1 300">档 -1</button>
+          <button class="padBtn" data-cmd="NOTE L 0 300">档 0</button>
+          <button class="padBtn" data-cmd="NOTE L 1 300">档 +1</button>
+          <button class="padBtn" data-cmd="NOTE L 2 300">档 +2</button>
+        </div>
+        <p class="deviceHint">按钮会立刻把命令发到开发板；连不上时先点「刷新」再选 COM 口。摇杆按钮发的是 STICK，相对的是左摇杆。</p>
+      </section>
+
+      <section class="deviceCard">
+        <div class="deviceHead"><span>命令</span><span class="devHint">NOTE 按键 档位(-2..2) 按住ms</span></div>
+        <textarea id="devCmd" class="devCmd" spellcheck="false">NOTE L -2 300</textarea>
+        <div class="deviceRow">
+          <button class="tool on" id="devSend">发送</button>
+          <button class="tool" id="devPlayScore">▶ 演奏当前谱面</button>
+          <button class="tool stop" id="devStopScore" disabled>■ 停止</button>
+          <button class="tool" id="devClearLog">清空日志</button>
+        </div>
+        <pre id="devLog" class="devLog"></pre>
+      </section>
+    </div>
+  </section>
+
+  <section class="view" data-view="flash" hidden>
+    <div class="deviceGrid">
+      <section class="deviceCard">
+        <div class="deviceHead"><span>固件刷入</span><span class="devStatus" id="fwStatus">空闲</span></div>
+        <div class="deviceRow"><label class="fwLabel">环境</label><select id="fwEnv"></select></div>
+        <div class="deviceRow"><label class="fwLabel">机型</label><select id="fwModel"></select></div>
+        <div class="deviceRow"><label class="fwLabel">端口</label><select id="fwPort"></select><button class="tool" id="fwRefresh">刷新</button></div>
+        <div class="deviceRow">
+          <button class="tool on" id="fwStart">开始刷入</button>
+          <button class="tool" id="fwCancel">取消</button>
+        </div>
+        <div class="deviceRow">
+          <button class="tool" id="fwInstallPio" title="通过 pip 安装 PlatformIO">安装 PlatformIO</button>
+          <button class="tool" id="fwInstallDriver" title="安装 CP210x USB 串口驱动">安装 CP210x 驱动</button>
+        </div>
+        <p class="deviceHint">刷入会调用 PlatformIO 编译并上传，需要本机能找到 pio；串口被占用时先回「设备与测试」断开。<span class="fwVer">v3</span></p>
+      </section>
+
+      <section class="deviceCard">
+        <div class="deviceHead"><span>刷写日志</span><span class="devHint" id="fwProgress"></span></div>
+        <pre id="fwLog" class="devLog"></pre>
+      </section>
+    </div>
+  </section>
+</div>
+
+<!-- 粘贴 / 导入 弹窗 -->
+<div class="modal" id="modal" aria-hidden="true">
+  <div class="modalBox">
+    <div class="modalHead">
+      <span id="modalTitle">粘贴序列</span>
+      <button class="modalX" id="modalClose" title="关闭">×</button>
+    </div>
+    <textarea id="modalText" spellcheck="false" placeholder="在这里粘贴：&#10;摇杆下+L → L → 摇杆上+L …&#10;或者导出的 JSON"></textarea>
+    <div class="modalInfo" id="modalInfo">支持键位链（摇杆下+L → L、摇杆下+L×2 表示长 2 格）、音名（C5 D5 E5）或导出的 JSON · 打开后按 Ctrl+V 粘贴</div>
+    <div class="modalRow">
+      <label class="modalChk"><input type="checkbox" id="modalAppend" /> 追加到现有音符后面</label>
+      <span class="modalHint">Esc 关闭 · Ctrl+Enter 确认</span>
+    </div>
+    <div class="modalFoot">
+      <button class="tool" id="modalCancel">取消</button>
+      <button class="tool on" id="modalOk" disabled>导入并替换</button>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script src="陶笛按键编排器.js"></script>
+</body>
+</html>
+
+
+
+
+
+
+
