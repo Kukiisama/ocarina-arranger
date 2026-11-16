@@ -283,7 +283,10 @@ if (!hasLock) {
     });
 
   app.on("window-all-closed", () => {
-    void stopWebServer().finally(() => {
+    // 关窗口时必须能退出：串口关闭偶发卡死会连累 stopWebServer，
+    // 这里最多等 2 秒就强退，避免进程赖着不走、一直占着 COM 口。
+    const forcedQuit = new Promise<void>((resolve) => setTimeout(resolve, 2000));
+    void Promise.race([stopWebServer().catch(() => undefined), forcedQuit]).finally(() => {
       if (process.platform !== "darwin") {
         app.quit();
       }

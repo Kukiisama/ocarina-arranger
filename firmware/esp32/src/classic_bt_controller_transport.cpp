@@ -56,7 +56,10 @@ constexpr uint16_t kReleaseMinWindowMs = 40;
 constexpr const char *kBluetoothTimingProfile = "switch2";
 // Switch 2 is still under characterization, so keep its idle/report cadence
 // conservative until we understand its Classic BT pairing behavior better.
-constexpr uint16_t kHidCongestionRetryBudgetMs = 800;
+// 显式输入期间，主机可能在 sniff/active 之间来回切换（日志里的 mode 2 ⇄ mode 0），
+// 一个 sniff 时隙可能长到 1.28s。原先 800ms 的重试预算撑不过去，会把整条命令判失败，
+// 表现为演奏中途 controller input report failed。放宽到 3 秒（单次发送超时仍保持 400ms）。
+constexpr uint16_t kHidCongestionRetryBudgetMs = 3000;
 constexpr uint16_t kHidCongestionRetryDelayMs = 120;
 constexpr uint16_t kSendTaskStartupDelayMs = 1000;
 constexpr uint16_t kPostOpenReportQuietMs = 1000;
@@ -123,6 +126,8 @@ constexpr uint16_t kSniffPrewarmGapMs = 0;
 constexpr uint16_t kSniffPrewarmSettleMs = 0;
 #endif
 constexpr uint16_t kExplicitInputDrainBudgetMs = 100;
+constexpr uint32_t kAutoRecoveryNoAckMs = 2500;
+constexpr uint32_t kAutoRecoveryCooldownMs = 15000;
 constexpr uint16_t kIdleDisconnectedReportIntervalMs = 100;
 constexpr uint16_t kReliableInputCongestionRetryBudgetMs =
     kHidCongestionRetryBudgetMs > 300 ? kHidCongestionRetryBudgetMs : 300;
@@ -694,10 +699,11 @@ void ClassicBtControllerTransport::updateInputReport() {
   report30_[5] = static_cast<uint8_t>((leftStickX_ << 4) & 0xF0);
   report30_[6] = static_cast<uint8_t>((leftStickX_ & 0xF0) >> 4);
   report30_[7] = leftStickY_;
+  // 右摇杆：12 位定点，中位 0x800。经实测（每 6 秒轮换候选的对照实验），
+  // 这套打包能让视角静止；之前的「视角自转」是因为写入了别的组合。
   report30_[8] = static_cast<uint8_t>((rightStickX_ << 4) & 0xF0);
   report30_[9] = static_cast<uint8_t>((rightStickX_ & 0xF0) >> 4);
   report30_[10] = rightStickY_;
-
   dummyReport_[0] = timer_;
 }
 
@@ -772,6 +778,19 @@ void ClassicBtControllerTransport::sendTaskTrampoline(void *param) {
   while (true) {
     if (!transport->explicitInputActive_ && !transport->shouldDelayInputReports()) {
       transport->sendCurrentInputReport(false);
+    }
+    // 自动自愈：主机空闲后会切进 sniff 省电模式，之后我们的报告收不到确认，
+    // 表现为「连按几下之后全部 controller input report failed」且永久不恢复。
+    // 这里用「距上次被主机 ACK 超过 2.5 秒」判定链路已死，直接重启蓝牙栈并回连
+    // （等价于手动发 BT RESET LAST-PEER），冷却 15 秒避免反复重启。
+    if (transport->connected_ && transport->lastInputReportAcceptedMs_ != 0 &&
+        millis() - transport->lastInputReportAcceptedMs_ > kAutoRecoveryNoAckMs &&
+        millis() - transport->lastAutoRecoveryMs_ > kAutoRecoveryCooldownMs) {
+      transport->lastAutoRecoveryMs_ = millis();
+      Serial.printf("WARN bt auto-recovery reason=no_ack_ms=%lu\n",
+                    static_cast<unsigned long>(millis() - transport->lastInputReportAcceptedMs_));
+      transport->resetConnection(true);
+      transport->lastInputReportAcceptedMs_ = millis();
     }
     if (kUseFixedSendInterval) {
       vTaskDelay(pdMS_TO_TICKS(kFixedSendTaskIntervalMs));

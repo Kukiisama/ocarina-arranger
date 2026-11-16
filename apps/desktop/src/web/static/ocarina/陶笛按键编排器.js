@@ -1190,7 +1190,7 @@
     document.getElementById('devDisconnect').addEventListener('click', async () => {
       try {
         await devApi('/api/serial-session/disconnect', {
-          method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}'
+          method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ force: true })  // 忙时也强制断开，确保释放串口
         });
         devLogLine('已断开串口');
         if (devStatus) { devStatus.textContent = '未连接'; devStatus.classList.remove('on'); }
@@ -1240,7 +1240,7 @@
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           commands: ['CFG INPUT 16 64 1800'].concat(lines), target: 'serial', portPath: port,
-          baudRate: 115200, ackTimeoutMs: 8000, retries: 0
+          baudRate: 115200, ackTimeoutMs: 12000, retries: 0  // 留足一次蓝牙自愈的时间
         })
       });
       (data.lines || []).slice(-12).forEach(l => devLogLine('< ' + l));

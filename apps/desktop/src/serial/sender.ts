@@ -259,7 +259,10 @@ export function waitForAck(
       }
 
       if (isDirectControllerInputReportFailureLine(line)) {
-        finish(() => reject(new Error("controller input report failed")));
+        // 固件内部会重试发送；真失败时它会回 ERR，由下面的 ACK 逻辑兜底。
+        // 这里只把原始行透出来当日志，不再直接中断命令——
+        // 否则偶发的一帧被拒绝就会让整条命令报 controller input report failed。
+        options?.onDeviceLine?.(line);
         return;
       }
 
@@ -828,21 +831,40 @@ function openPort(port: SerialPort): Promise<void> {
   });
 }
 
-function closePort(port: SerialPort): Promise<void> {
+function closePort(port: SerialPort, timeoutMs = 1500): Promise<void> {
   return new Promise((resolve, reject) => {
     if (!port.isOpen) {
       resolve();
       return;
     }
 
-    port.close((error) => {
-      if (error) {
-        reject(error);
+    let settled = false;
+    const finish = (error?: Error | null) => {
+      if (settled) {
         return;
       }
+      settled = true;
+      clearTimeout(timer);
+      if (error) {
+        reject(error);
+      } else {
+        resolve();
+      }
+    };
 
-      resolve();
-    });
+    // Windows 上驱动/设备异常时，port.close() 的回调可能永远不来，
+    // 会让「断开」和「关窗口」一起挂死、进程不退、串口一直被占用。
+    // 这里兜底超时，保证控制流能继续（句柄最迟在进程退出时释放）。
+    const timer = setTimeout(() => {
+      console.warn("[serial] close timed out, releasing handle reference anyway");
+      finish();
+    }, timeoutMs);
+
+    try {
+      port.close((error) => finish(error ?? null));
+    } catch (error) {
+      finish(error instanceof Error ? error : new Error(String(error)));
+    }
   });
 }
 
