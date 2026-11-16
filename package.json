@@ -21,7 +21,7 @@
     "dist:mac": "npm run build && electron-builder --mac",
     "dist:win": "npm run dist:win:x64",
     "dist:win:x64": "npm run build && electron-builder --win --x64",
-    "postinstall": "patch-package && electron-builder install-app-deps"
+    "postinstall": "patch-package"
   },
   "build": {
     "appId": "com.ocarina.arranger",
