@@ -2,7 +2,7 @@
   "name": "oot-ocarina-arranger",
   "description": "时之笛乐谱编排器与演奏器",
   "author": "Kukiisama",
-  "version": "1.1.2",
+  "version": "1.1.3",
   "private": true,
   "type": "module",
   "main": "dist/apps/desktop/src/electron/main.js",

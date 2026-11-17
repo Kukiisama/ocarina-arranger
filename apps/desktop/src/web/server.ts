@@ -21,6 +21,7 @@ import {
   listDrawingTemplates,
   loadDrawingTemplateMask,
 } from "../drawingTemplates.js";
+import { ABOUT_INFO, resolveAppVersion } from "./about.js";
 import {
   FirmwareToolingManager,
   type ToolingConfig,
@@ -45,6 +46,7 @@ import {
   type RecoverySessionRecord,
   type RecoverySessionSummary,
 } from "./recoverySessions.js";
+import { checkForUpdate } from "./updateCheck.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -98,6 +100,12 @@ export interface StartWebServerOptions {
   port?: number;
   staticRoot?: string;
   firmwareRoot?: string;
+  appVersion?: string;
+  /**
+   * 检查更新用的 fetch。Electron 下由 main.ts 注入 net.fetch（Chromium 网络栈，
+   * 走 Windows 证书库和系统代理）；独立跑 ui:dev / CLI 时缺省用 Node 的 fetch。
+   */
+  updateFetcher?: typeof fetch;
   refreshFirmwareRoot?: () => Promise<string>;
   windowsDriverRoot?: string;
   appDataRoot?: string;
@@ -118,6 +126,9 @@ interface WebRuntimeConfig {
   port: number;
   staticRoot: string;
   firmwareRoot: string;
+  /** 「关于」页显示的版本号 */
+  appVersion: string;
+  updateFetcher: typeof fetch | null;
   refreshFirmwareRoot?: (() => Promise<string>) | undefined;
   toolingManager: FirmwareToolingManager;
   windowsSerialDriverManager: WindowsSerialDriverManager;
@@ -130,6 +141,8 @@ let webRuntime: WebRuntimeConfig = {
   port: defaultPort,
   staticRoot: defaultStaticRoot,
   firmwareRoot: defaultFirmwareRoot,
+  appVersion: resolveAppVersion(),
+  updateFetcher: null,
   refreshFirmwareRoot: undefined,
   toolingManager: new FirmwareToolingManager({ appDataRoot: defaultAppDataRoot }),
   windowsSerialDriverManager: new WindowsSerialDriverManager(defaultWindowsDriverRoot),
@@ -1483,6 +1496,32 @@ function handleDrawingTemplates(response: ServerResponse): void {
   });
 }
 
+function handleAbout(response: ServerResponse): void {
+  json(response, 200, {
+    ...ABOUT_INFO,
+    version: webRuntime.appVersion,
+    runtime: {
+      platform: process.platform,
+      arch: process.arch,
+      node: process.versions.node,
+      electron: process.versions.electron ?? null,
+    },
+  });
+}
+
+async function handleUpdateCheck(url: URL, response: ServerResponse): Promise<void> {
+  // 网络问题一律转成 status=unknown 返回，前端只负责展示，不抛错
+  const fetcher = webRuntime.updateFetcher;
+  const result = await checkForUpdate({
+    currentVersion: webRuntime.appVersion,
+    repoUrl: ABOUT_INFO.repoUrl,
+    // 手动点「检查更新」会带 force=1：绕过 10 分钟缓存，点一次就是最新结果
+    force: url.searchParams.get("force") === "1",
+    ...(fetcher ? { fetchImpl: fetcher } : {}),
+  });
+  json(response, 200, { ...result });
+}
+
 async function executeCommands(body: {
   commands?: string[];
   target?: "simulate" | "serial";
@@ -2418,6 +2457,16 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
       return;
     }
 
+    if (request.method === "GET" && url.pathname === "/api/about") {
+      handleAbout(response);
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/update/check") {
+      await handleUpdateCheck(url, response);
+      return;
+    }
+
     if (request.method === "GET" && url.pathname === "/api/firmware/info") {
       await handleFirmwareInfo(response);
       return;
@@ -2559,6 +2608,8 @@ export async function startWebServer(
       port: options.port ?? defaultPort,
       staticRoot: options.staticRoot ?? defaultStaticRoot,
       firmwareRoot: options.firmwareRoot ?? defaultFirmwareRoot,
+      appVersion: resolveAppVersion(options.appVersion),
+      updateFetcher: options.updateFetcher ?? null,
       refreshFirmwareRoot: options.refreshFirmwareRoot,
       toolingManager: new FirmwareToolingManager({
         appDataRoot: options.appDataRoot ?? defaultAppDataRoot,

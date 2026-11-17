@@ -33,6 +33,7 @@
     <button class="tabBtn on" data-view="score">曲谱编排</button>
     <button class="tabBtn" data-view="device">设备与测试</button>
     <button class="tabBtn" data-view="flash">固件刷入</button>
+    <button class="tabBtn" data-view="about">关于<span class="tabDot" id="aboutDot" hidden></span></button>
   </nav>
 
   <section class="view" data-view="score">
@@ -192,6 +193,36 @@
       <section class="deviceCard">
         <div class="deviceHead"><span>刷写日志</span><span class="devHint" id="fwProgress"></span></div>
         <pre id="fwLog" class="devLog"></pre>
+      </section>
+    </div>
+  </section>
+
+  <section class="view" data-view="about" hidden>
+    <div class="deviceGrid aboutGrid">
+      <section class="deviceCard">
+        <div class="deviceHead"><span>工具简介</span><span class="devStatus" id="aboutVersionBadge">v—</span></div>
+        <p class="aboutLead" id="aboutTagline">在钢琴卷帘上编谱 → 输出手柄键位 → ESP32 模拟 Switch Pro 手柄演奏。</p>
+        <ul class="aboutList" id="aboutFeatures">
+          <li>曲谱编排：钢琴卷帘放置音符，支持 JSON / 文本 / MIDI 导入与导出。</li>
+          <li>设备与测试：串口演奏、按键与摇杆调试、断连与回连。</li>
+          <li>固件刷入：一键编译并上传 ESP32 固件。</li>
+        </ul>
+        <dl class="aboutMeta">
+          <dt>制作</dt><dd>Kukiisama</dd>
+          <dt>许可</dt><dd>GPL-3.0</dd>
+          <dt>项目地址</dt><dd><a id="aboutRepo" href="https://github.com/Kukiisama/ocarina-arranger" target="_blank" rel="noreferrer">github.com/Kukiisama/ocarina-arranger ↗</a></dd>
+          <dt>版本</dt><dd id="aboutVersion">读取中…</dd>
+          <dt>运行环境</dt><dd id="aboutRuntime">—</dd>
+        </dl>
+      </section>
+
+      <section class="deviceCard">
+        <div class="deviceHead"><span>版本更新</span><span class="devStatus" id="updateStatus">未检查</span></div>
+        <div class="deviceRow">
+          <button class="tool on" id="updateCheckBtn" type="button">检查更新</button>
+          <span class="devHint" id="updateCheckedAt">上次检查：—</span>
+        </div>
+        <p class="deviceHint" id="updateDetail">启动时会自动检查一次，失败不影响使用。</p>
       </section>
     </div>
   </section>

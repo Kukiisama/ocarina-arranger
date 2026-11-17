@@ -1098,6 +1098,7 @@
     }
     if (name === 'device') refreshPorts();
     if (name === 'flash') { loadFirmwareInfo(); refreshFwPorts(); }
+    if (name === 'about') loadAbout();
   }
   if (tabbar) {
     tabbar.addEventListener('click', e => {
@@ -1505,6 +1506,154 @@
 
   // 启动时先把串口列表拉好，曲谱页的「演奏」直接可用
   refreshPorts();
+
+  /* ---------------- 关于页 ---------------- */
+  const aboutVersionEl = document.getElementById('aboutVersion');
+  const aboutVersionBadge = document.getElementById('aboutVersionBadge');
+  const aboutRepoEl = document.getElementById('aboutRepo');
+  const aboutRuntimeEl = document.getElementById('aboutRuntime');
+  const aboutTaglineEl = document.getElementById('aboutTagline');
+  const aboutFeaturesEl = document.getElementById('aboutFeatures');
+  const updateBtn = document.getElementById('updateCheckBtn');
+  const updateStatusEl = document.getElementById('updateStatus');
+  const updateDetailEl = document.getElementById('updateDetail');
+  const updateCheckedAtEl = document.getElementById('updateCheckedAt');
+  const aboutDot = document.getElementById('aboutDot');
+  let aboutLoaded = false;
+  let updateRunning = false;
+  let lastReleaseUrl = '';
+
+  function pad2(n) { return n < 10 ? '0' + n : '' + n; }
+
+  function fmtDateTime(ts) {
+    if (!ts) return '—';
+    const d = new Date(ts);
+    return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) +
+      ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+  }
+
+  function setUpdateStatus(text, tone) {
+    if (!updateStatusEl) return;
+    updateStatusEl.textContent = text;
+    updateStatusEl.classList.toggle('on', tone === 'on');
+    updateStatusEl.classList.toggle('warn', tone === 'warn');
+  }
+
+  async function loadAbout() {
+    if (aboutLoaded) return;
+    aboutLoaded = true;
+    try {
+      const info = await devApi('/api/about');
+      if (aboutVersionEl) aboutVersionEl.textContent = 'v' + info.version;
+      if (aboutVersionBadge) aboutVersionBadge.textContent = 'v' + info.version;
+      if (aboutRepoEl && info.repoUrl) {
+        aboutRepoEl.href = info.repoUrl;
+        aboutRepoEl.textContent = (info.repoLabel || info.repoUrl) + ' ↗';
+      }
+      if (aboutTaglineEl && info.tagline) {
+        aboutTaglineEl.textContent = info.tagline;
+      }
+      if (aboutFeaturesEl && Array.isArray(info.description)) {
+        aboutFeaturesEl.textContent = '';
+        info.description.forEach(function (line) {
+          const li = document.createElement('li');
+          li.textContent = line;
+          aboutFeaturesEl.appendChild(li);
+        });
+      }
+      if (aboutRuntimeEl) {
+        const rt = info.runtime || {};
+        const parts = [];
+        if (rt.platform) parts.push(rt.platform === 'win32' ? 'Windows' : (rt.platform === 'darwin' ? 'macOS' : rt.platform));
+        if (rt.arch) parts.push(rt.arch);
+        if (rt.electron) parts.push('Electron ' + rt.electron);
+        aboutRuntimeEl.textContent = parts.join(' · ') || '—';
+      }
+    } catch (e) {
+      aboutLoaded = false;
+      if (aboutVersionEl) aboutVersionEl.textContent = '读取失败';
+    }
+  }
+
+  function renderUpdate(result) {
+    if (!result) return;
+    lastReleaseUrl = result.releaseUrl || '';
+    if (updateCheckedAtEl && result.checkedAt) {
+      updateCheckedAtEl.textContent = '上次检查：' + fmtDateTime(result.checkedAt);
+    }
+
+    if (result.status === 'outdated' && result.latestVersion) {
+      setUpdateStatus('有新版本', 'warn');
+      if (updateDetailEl) {
+        updateDetailEl.textContent = 'v' + result.latestVersion + ' 已发布' +
+          (result.publishedAt ? '（' + String(result.publishedAt).slice(0, 10) + '）' : '') + '，点这里查看。';
+        updateDetailEl.classList.add('clickable');
+      }
+      if (aboutDot) aboutDot.hidden = false;
+      return;
+    }
+
+    if (updateDetailEl) updateDetailEl.classList.remove('clickable');
+
+    if (result.status === 'latest') {
+      setUpdateStatus('已是最新', 'on');
+      if (updateDetailEl) updateDetailEl.textContent = '当前 v' + result.currentVersion + ' 就是最新版本。';
+      if (aboutDot) aboutDot.hidden = true;
+      return;
+    }
+
+    const reasons = {
+      NO_RELEASE: '仓库还没有发布版本。',
+      TIMEOUT: '检查超时，可能网络不通。',
+      BAD_TAG: '发布版本号格式不认识。',
+      TLS_CERT: 'HTTPS 证书校验失败，可能有代理或加速器在中间拦截。'
+    };
+    setUpdateStatus('检查失败', '');
+    if (updateDetailEl) {
+      updateDetailEl.textContent = reasons[result.error] || ('检查失败：' + (result.error || '未知错误'));
+    }
+  }
+
+  async function checkUpdate(manual) {
+    if (updateRunning) return null;
+    updateRunning = true;
+    if (updateBtn) updateBtn.disabled = true;
+    if (manual) setUpdateStatus('检查中…', '');
+    try {
+      // 手动点按钮带 force=1 绕过缓存；启动自动检查走缓存，避免重复打 GitHub
+      const result = await devApi('/api/update/check' + (manual ? '?force=1' : ''));
+      renderUpdate(result);
+      if (manual && result.status === 'latest') toast('已经是最新版本 v' + result.currentVersion);
+      return result;
+    } catch (e) {
+      setUpdateStatus('检查失败', '');
+      if (updateDetailEl) updateDetailEl.textContent = '检查失败：' + e.message;
+      if (manual) toast('检查更新失败');
+      return null;
+    } finally {
+      updateRunning = false;
+      if (updateBtn) updateBtn.disabled = false;
+    }
+  }
+
+  if (updateBtn) {
+    updateBtn.addEventListener('click', function () { checkUpdate(true); });
+  }
+
+  if (updateDetailEl) {
+    updateDetailEl.addEventListener('click', function () {
+      if (lastReleaseUrl) window.open(lastReleaseUrl, '_blank');
+    });
+  }
+
+  // 启动自动检查：延迟 1.5 秒静默进行，失败不弹窗、不影响任何功能
+  window.setTimeout(function () {
+    checkUpdate(false).then(function (result) {
+      if (result && result.status === 'outdated' && result.latestVersion) {
+        toast('发现新版本 v' + result.latestVersion);
+      }
+    }).catch(function () {});
+  }, 1500);
 
   window.__ocarina = {
     importMidi: function (buf) { importMidi(buf); },

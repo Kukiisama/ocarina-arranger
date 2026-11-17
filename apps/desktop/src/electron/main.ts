@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, net, shell } from "electron";
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync } from "node:fs";
 import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
@@ -169,6 +169,25 @@ async function ensureWritableFirmwareRoot(): Promise<string> {
   return targetRoot;
 }
 
+// 检查更新走 Electron 自己的网络栈（Chromium）：它用 Windows 证书库和系统代理，
+// 比 Node 自带的 fetch 更容易过掉本地代理 / 加速器造成的证书链问题。
+function createUpdateFetcher(): typeof fetch {
+  return async (input, init) => {
+    const url =
+      typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const headers = (init?.headers ?? {}) as Record<string, string>;
+    const request = net.fetch(url, { method: init?.method ?? "GET", headers });
+    const timeout = new Promise<never>((_, reject) => {
+      const timer = setTimeout(() => {
+        reject(Object.assign(new Error("update check timeout"), { name: "TimeoutError" }));
+      }, 10_000);
+      timer.unref?.();
+    });
+
+    return (await Promise.race([request, timeout])) as Response;
+  };
+}
+
 async function createMainWindow(): Promise<void> {
   const firmwareRoot = await ensureWritableFirmwareRoot();
   const appIcon = getAppIconPath();
@@ -183,6 +202,8 @@ async function createMainWindow(): Promise<void> {
     port: 0,
     staticRoot: getStaticRoot(),
     firmwareRoot,
+    appVersion: app.getVersion(),
+    updateFetcher: createUpdateFetcher(),
     refreshFirmwareRoot: ensureWritableFirmwareRoot,
     appDataRoot: getPlatformIoSafeDataRoot(),
     recoverySessionsRoot: getRecoverySessionsRoot(),
@@ -211,6 +232,28 @@ async function createMainWindow(): Promise<void> {
 
   mainWindow.on("closed", () => {
     mainWindow = null;
+  });
+
+  // 「关于」页里的项目地址等外链：交给系统浏览器，不要在应用里新开窗口
+  const serverUrl = webServer.url;
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//iu.test(url)) {
+      void shell.openExternal(url);
+    }
+
+    return { action: "deny" };
+  });
+
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    if (url.startsWith(serverUrl)) {
+      return;
+    }
+
+    event.preventDefault();
+
+    if (/^https?:\/\//iu.test(url)) {
+      void shell.openExternal(url);
+    }
   });
 
   logStartup("window created, loading " + webServer.url);

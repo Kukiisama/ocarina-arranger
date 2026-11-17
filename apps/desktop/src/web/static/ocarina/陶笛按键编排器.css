@@ -306,3 +306,18 @@
 .tool.stop:hover{background:linear-gradient(180deg,#ea6a5e,#c74439);border-color:#e06a60;color:#fff}
 .tool.stop:disabled{background:#231718;border-color:#3a2426;color:#7a5a5a;font-weight:400;cursor:default}
 .fwVer{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:4px;background:#2a2118;color:#e8b44a;font-size:11px}
+
+/* ---------- 关于页 ---------- */
+.aboutGrid{grid-template-columns:minmax(380px,1.25fr) minmax(300px,1fr)}
+.aboutLead{margin:0;font-size:12.5px;color:#c3cddb;line-height:1.85}
+.aboutList{margin:0;padding-left:18px;font-size:12px;color:#9fb0c4;line-height:1.95}
+.aboutMeta{display:grid;grid-template-columns:76px 1fr;gap:8px 12px;margin:0;font-size:12px;align-items:baseline}
+.aboutMeta dt{color:#6f7f95}
+.aboutMeta dd{margin:0;color:#dbe4f0;word-break:break-all}
+.aboutMeta a{color:#e8c46a;text-decoration:none}
+.aboutMeta a:hover{text-decoration:underline}
+.tabDot{display:inline-block;width:6px;height:6px;margin-left:6px;border-radius:50%;background:#e8c46a;vertical-align:middle}
+.tabDot[hidden]{display:none}
+.devStatus.warn{color:#e8c46a}
+.deviceHint.clickable{cursor:pointer;color:#e8c46a}
+.deviceHint.clickable:hover{text-decoration:underline}
