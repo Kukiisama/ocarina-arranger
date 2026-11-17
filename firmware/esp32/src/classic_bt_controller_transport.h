@@ -14,6 +14,8 @@ class ClassicBtControllerTransport : public ControllerTransport {
   bool moveDirection(int x, int y, uint16_t holdMs, uint16_t settleMs) override;
   void setNextStickLevel(int level) override;
   bool resetConnection(bool reconnectLastPeer = false) override;
+  bool disconnectPeer() override;
+  bool connectPeer() override;
   bool clearStoredPeer() override;
   void printStatus(Print &output) const override;
   const char *name() const override;

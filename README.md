@@ -254,6 +254,8 @@ pio run -e esp32dev_wireless_switch2 -t upload --upload-port COM3
 | `CFG INPUT <按下> <静默> <Home>` | 设置按键保持、释放静默、Home 时长 |
 | `<数字>ms` | 纯等待，如 `250ms` |
 | `BT RESET` | 重置蓝牙配对 |
+| `BT DISCONNECT` | 主动断开主机（主机上会显示手柄已断开，配对保留） |
+| `BT CONNECT` | 主动回连上次的主机 |
 
 **档位映射（`NOTE` 命令）**
 
@@ -286,6 +288,10 @@ pio run -e esp32dev_wireless_switch2 -t upload --upload-port COM3
 
 **Q：插上板子没有 COM 口？**
 装 CP210x / CH340 驱动；换一根**能传数据**的 USB 线（很多线只供电）。
+
+**Q：关掉软件后，主机上还挂着手柄？**
+点「断开」时会先让开发板断开与主机的蓝牙链路，再释放串口。
+如果只关了软件没点断开，可以在「设备与测试」点「回连主机」重新接回来，或者直接拔插板子。
 
 **Q：Electron 启动后闪一下就没了？**
 先看 `%TEMP%\ocarina-startup.log` 的最后几行。若是系统里有残留进程占着串口/端口，重启电脑通常能解决。

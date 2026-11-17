@@ -1183,12 +1183,39 @@
   if (document.getElementById('devConnect')) {
     document.getElementById('devConnect').addEventListener('click', () => sendDeviceCommand('I'));
   }
+  if (document.getElementById('devBtConnect')) {
+    document.getElementById('devBtConnect').addEventListener('click', () => sendDeviceCommand('BT CONNECT'));
+  }
   if (document.getElementById('devResetBt')) {
     document.getElementById('devResetBt').addEventListener('click', () => sendDeviceCommand('BT RESET'));
   }
   if (document.getElementById('devDisconnect')) {
     document.getElementById('devDisconnect').addEventListener('click', async () => {
       try {
+        // 先通知开发板断开与主机的蓝牙链路，再关串口，
+        // 否则软件关了但主机上仍挂着这个手柄。
+        const portSel = document.getElementById('devPort');
+        const portPath = portSel ? portSel.value : '';
+        if (portPath) {
+          try {
+            await devApi('/api/execute', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({
+                commands: ['BT DISCONNECT'],
+                target: 'serial',
+                portPath,
+                baudRate: 115200,
+                ackTimeoutMs: 3000,
+                retries: 0
+              })
+            });
+            devLogLine('已通知开发板断开主机');
+          } catch (e) {
+            devLogLine('断开主机失败（继续释放串口）：' + e.message);
+          }
+        }
+
         await devApi('/api/serial-session/disconnect', {
           method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ force: true })  // 忙时也强制断开，确保释放串口
         });

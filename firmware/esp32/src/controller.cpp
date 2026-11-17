@@ -484,6 +484,16 @@ bool SwitchController::resetBluetooth(bool reconnectLastPeer) {
 
 bool SwitchController::clearBluetoothPeer() { return transport_.clearStoredPeer(); }
 
+bool SwitchController::disconnectBluetooth() {
+  waitUntilReady();
+  return transport_.disconnectPeer();
+}
+
+bool SwitchController::connectBluetooth() {
+  waitUntilReady();
+  return transport_.connectPeer();
+}
+
 void SwitchController::pause() { paused_ = true; }
 
 void SwitchController::resume() { paused_ = false; }

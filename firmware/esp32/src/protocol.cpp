@@ -669,6 +669,26 @@ bool executeCommand(const String &line, SwitchController &controller, String &er
     return true;
   }
 
+  if (line == "BT DISCONNECT") {
+    const bool ok = controller.disconnectBluetooth();
+    Serial.printf("INFO action=bt-disconnect ok=%s\n", ok ? "true" : "false");
+    if (!ok) {
+      error = "bt disconnect failed";
+      return false;
+    }
+    return true;
+  }
+
+  if (line == "BT CONNECT") {
+    const bool ok = controller.connectBluetooth();
+    Serial.printf("INFO action=bt-connect ok=%s\n", ok ? "true" : "false");
+    if (!ok) {
+      error = "bt connect failed";
+      return false;
+    }
+    return true;
+  }
+
   if (line == "BT CLEAR-PEER") {
     if (!controller.clearBluetoothPeer()) {
       error = "bt clear-peer failed";

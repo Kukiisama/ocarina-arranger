@@ -1003,6 +1003,35 @@ bool ClassicBtControllerTransport::resetConnection(bool reconnectLastPeer) {
   return true;
 }
 
+// 主动断开与主机的链路：主机侧会立刻显示「手柄已断开」，配对信息保留。
+bool ClassicBtControllerTransport::disconnectPeer() {
+  if (!hasPeerAddress_) {
+    Serial.println("WARN bt disconnect no-peer");
+    return false;
+  }
+
+  uint8_t peer[6];
+  std::memcpy(peer, lastPeerAddress_, sizeof(peer));
+
+  const esp_err_t hidErr = esp_bt_hid_device_disconnect();
+  Serial.printf("INFO bt disconnect hid_err=%s peer=%s\n",
+                esp_err_to_name(hidErr),
+                formatBluetoothAddress(peer).c_str());
+
+  return hidErr == ESP_OK;
+}
+
+// 主动回连上次的主机（不重启蓝牙栈，配对信息保留）。
+bool ClassicBtControllerTransport::connectPeer() {
+  if (!hasPeerAddress_) {
+    Serial.println("WARN bt connect no-peer");
+    return false;
+  }
+  if (connected_) {
+    return true;
+  }
+  return attemptVirtualCablePlug(lastPeerAddress_, "manual-connect");
+}
 bool ClassicBtControllerTransport::clearStoredPeer() {
   const bool hadPeerAddress = hasPeerAddress_;
   uint8_t previousPeerAddress[6] = {};
@@ -2033,6 +2062,8 @@ bool ClassicBtControllerTransport::resetConnection(bool reconnectLastPeer) {
   return false;
 }
 
+bool ClassicBtControllerTransport::disconnectPeer() { return false; }
+bool ClassicBtControllerTransport::connectPeer() { return false; }
 bool ClassicBtControllerTransport::clearStoredPeer() { return false; }
 
 void ClassicBtControllerTransport::printStatus(Print &output) const {

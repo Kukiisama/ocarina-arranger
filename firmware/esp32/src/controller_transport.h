@@ -80,6 +80,9 @@ class ControllerTransport {
   virtual void setNextStickLevel(int level) { (void)level; }
   virtual bool resetConnection(bool reconnectLastPeer = false) = 0;
   virtual bool clearStoredPeer() = 0;
+  // 主动与主机断开/回连（保持配对，不重启蓝牙栈）
+  virtual bool disconnectPeer() { return false; }
+  virtual bool connectPeer() { return false; }
   virtual void printStatus(Print &output) const = 0;
   virtual const char *name() const = 0;
 
