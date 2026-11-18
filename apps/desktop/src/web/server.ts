@@ -22,6 +22,7 @@ import {
   loadDrawingTemplateMask,
 } from "../drawingTemplates.js";
 import { ABOUT_INFO, resolveAppVersion } from "./about.js";
+import { CHANGELOG } from "./changelog.js";
 import {
   loadScoreFile,
   loadScoreIndex,
@@ -1517,6 +1518,10 @@ function handleAbout(response: ServerResponse): void {
   });
 }
 
+function handleChangelog(response: ServerResponse): void {
+  json(response, 200, { entries: CHANGELOG });
+}
+
 async function handleUpdateCheck(url: URL, response: ServerResponse): Promise<void> {
   // 网络问题一律转成 status=unknown 返回，前端只负责展示，不抛错
   const fetcher = webRuntime.updateFetcher;
@@ -2521,6 +2526,11 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
 
     if (request.method === "GET" && url.pathname === "/api/about") {
       handleAbout(response);
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/changelog") {
+      handleChangelog(response);
       return;
     }
 

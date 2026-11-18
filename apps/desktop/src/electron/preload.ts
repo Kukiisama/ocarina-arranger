@@ -22,17 +22,15 @@ const windowApi = {
   },
 
   /**
-   * 应用内更新：主进程弹窗询问 → 需要的话下载安装包 → 自动启动安装程序。
-   * 返回 { action: "installed" | "later" | "manual" | "busy" | "error", error? }
+   * 应用内下载更新：主进程下载安装包，下载完自动启动安装程序。
+   * 返回 { action: "installed" | "busy" | "error", error? }
    */
-  promptUpdate: async (info: {
+  downloadUpdate: async (info: {
     version: string;
-    currentVersion: string;
-    releaseUrl: string;
-    assetUrl: string | null;
+    assetUrl: string;
     assetName: string | null;
   }): Promise<{ action: string; error?: string; filePath?: string }> => {
-    return ipcRenderer.invoke("ocarina:update-flow", info);
+    return ipcRenderer.invoke("ocarina:update-download", info);
   },
 
   /** 订阅下载进度，返回取消订阅函数 */

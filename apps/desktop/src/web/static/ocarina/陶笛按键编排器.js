@@ -2336,18 +2336,93 @@
     }
   }
 
-  // 发现新版本 → 弹窗（下载并安装 / 稍后 / 打开发布页），下载进度实时显示在关于页
+  // 发现新版本 → 主题弹窗（下载并安装 / 稍后 / 打开发布页），下载进度实时显示在关于页
   let updatePromptedThisRun = false;
   let updateDownloading = false;
+
+  const updateModalEl = document.getElementById('updateModal');
+  const updateModalTitleEl = document.getElementById('updateModalTitle');
+  const updateModalMetaEl = document.getElementById('updateModalMeta');
+  const updateModalNoteEl = document.getElementById('updateModalNote');
+  const updateModalDownloadBtn = document.getElementById('updateModalDownload');
+  const updateModalLaterBtn = document.getElementById('updateModalLater');
+  const updateModalManualBtn = document.getElementById('updateModalManual');
+  const updateModalCloseBtn = document.getElementById('updateModalClose');
+
+  let updateModalResolve = null;
+
+  function closeUpdateModal(choice) {
+    if (updateModalEl) {
+      updateModalEl.classList.remove('on');
+      updateModalEl.setAttribute('aria-hidden', 'true');
+    }
+    const resolve = updateModalResolve;
+    updateModalResolve = null;
+    if (resolve) resolve(choice);
+  }
+
+  function openUpdateModal(result) {
+    return new Promise(function (resolve) {
+      if (!updateModalEl) { resolve('manual'); return; }
+
+      updateModalResolve = resolve;
+
+      if (updateModalTitleEl) updateModalTitleEl.textContent = '发现新版本 v' + result.latestVersion;
+      if (updateModalMetaEl) {
+        updateModalMetaEl.textContent = '当前版本 v' + result.currentVersion +
+          (result.publishedAt ? '　·　发布于 ' + String(result.publishedAt).slice(0, 10) : '');
+      }
+
+      const hasAsset = !!(result.asset && result.asset.url);
+      if (updateModalNoteEl) {
+        updateModalNoteEl.textContent = hasAsset
+          ? '下载完成后会自动启动安装程序。'
+          : '这个版本没有可直接下载的安装包，请到发布页手动下载。';
+      }
+      if (updateModalDownloadBtn) updateModalDownloadBtn.hidden = !hasAsset;
+
+      updateModalEl.classList.add('on');
+      updateModalEl.setAttribute('aria-hidden', 'false');
+    });
+  }
+
+  if (updateModalDownloadBtn) updateModalDownloadBtn.addEventListener('click', function () { closeUpdateModal('download'); });
+  if (updateModalLaterBtn) updateModalLaterBtn.addEventListener('click', function () { closeUpdateModal('later'); });
+  if (updateModalManualBtn) updateModalManualBtn.addEventListener('click', function () { closeUpdateModal('manual'); });
+  if (updateModalCloseBtn) updateModalCloseBtn.addEventListener('click', function () { closeUpdateModal('later'); });
+  if (updateModalEl) {
+    updateModalEl.addEventListener('click', function (e) {
+      if (e.target === updateModalEl) closeUpdateModal('later');
+    });
+  }
 
   async function promptUpdateFlow(result) {
     if (updateDownloading) return;
     if (!result || result.status !== 'outdated' || !result.latestVersion) return;
 
     const api = window.friendMakerWindow;
+    const hasAsset = !!(result.asset && result.asset.url);
 
     // 非 Electron（浏览器直接打开）时退回打开发布页
-    if (!api || typeof api.promptUpdate !== 'function') {
+    if (!api || typeof api.downloadUpdate !== 'function') {
+      if (result.releaseUrl) window.open(result.releaseUrl, '_blank');
+      return;
+    }
+
+    const choice = await openUpdateModal(result);
+
+    if (choice === 'later') {
+      toast('已跳过，可随时在「关于」页更新');
+      return;
+    }
+
+    if (choice === 'manual') {
+      if (result.releaseUrl) window.open(result.releaseUrl, '_blank');
+      toast('已在浏览器打开发布页');
+      return;
+    }
+
+    if (!hasAsset) {
       if (result.releaseUrl) window.open(result.releaseUrl, '_blank');
       return;
     }
@@ -2356,22 +2431,16 @@
     if (updateBtn) updateBtn.disabled = true;
 
     try {
-      const outcome = (await api.promptUpdate({
+      const outcome = (await api.downloadUpdate({
         version: result.latestVersion,
-        currentVersion: result.currentVersion,
-        releaseUrl: result.releaseUrl || '',
-        assetUrl: result.asset ? result.asset.url : null,
-        assetName: result.asset ? result.asset.name : null
+        assetUrl: result.asset.url,
+        assetName: result.asset.name
       })) || {};
 
       if (outcome.action === 'installed') {
         setUpdateStatus('已下载', 'on');
         if (updateDetailEl) updateDetailEl.textContent = '安装包已下载并启动，按提示完成安装即可。';
         toast('安装包已启动，按提示完成安装');
-      } else if (outcome.action === 'manual') {
-        toast('已在浏览器打开发布页');
-      } else if (outcome.action === 'later') {
-        toast('已跳过，可随时在「关于」页更新');
       } else if (outcome.action === 'busy') {
         toast('更新正在处理中，请稍候');
       } else if (outcome.action === 'error') {
@@ -2401,6 +2470,98 @@
             ? '：' + (p.received / 1048576).toFixed(1) + ' MB'
             : '：' + pct + '%（' + (p.received / 1048576).toFixed(1) + ' MB）');
       }
+    });
+  }
+
+  /* ---------------- 更新日志 ---------------- */
+  const changelogModalEl = document.getElementById('changelogModal');
+  const changelogListEl = document.getElementById('changelogList');
+  const changelogBtn = document.getElementById('changelogBtn');
+  const changelogCloseEl = document.getElementById('changelogClose');
+
+  const KIND_CLASS = { '新增': 'new', '修复': 'fix', '优化': 'improve', '说明': 'note' };
+  let changelogLoaded = false;
+
+  function renderChangelog(entries) {
+    if (!changelogListEl) return;
+    changelogListEl.textContent = '';
+
+    if (!entries.length) {
+      const empty = document.createElement('div');
+      empty.className = 'changelogEmpty';
+      empty.textContent = '还没有更新记录';
+      changelogListEl.appendChild(empty);
+      return;
+    }
+
+    entries.forEach(function (entry) {
+      const block = document.createElement('div');
+      block.className = 'clEntry';
+
+      const head = document.createElement('div');
+      head.className = 'clVersion';
+      const ver = document.createElement('b');
+      ver.textContent = 'v' + String(entry.version || '');
+      const date = document.createElement('span');
+      date.textContent = String(entry.date || '');
+      head.appendChild(ver);
+      head.appendChild(date);
+      block.appendChild(head);
+
+      (Array.isArray(entry.items) ? entry.items : []).forEach(function (item) {
+        const row = document.createElement('div');
+        row.className = 'clItem';
+
+        const tag = document.createElement('span');
+        tag.className = 'clKind ' + (KIND_CLASS[item.kind] || 'note');
+        tag.textContent = item.kind || '说明';
+
+        const text = document.createElement('span');
+        text.textContent = String(item.text || '');
+
+        row.appendChild(tag);
+        row.appendChild(text);
+        block.appendChild(row);
+      });
+
+      changelogListEl.appendChild(block);
+    });
+  }
+
+  async function loadChangelog() {
+    if (changelogLoaded || !changelogListEl) return;
+    try {
+      const data = await devApi('/api/changelog');
+      const entries = Array.isArray(data.entries) ? data.entries : [];
+      renderChangelog(entries);
+      changelogLoaded = true;
+    } catch (e) {
+      changelogListEl.textContent = '';
+      const failed = document.createElement('div');
+      failed.className = 'changelogEmpty';
+      failed.textContent = '读取更新日志失败：' + e.message;
+      changelogListEl.appendChild(failed);
+    }
+  }
+
+  function openChangelog() {
+    if (!changelogModalEl) return;
+    changelogModalEl.classList.add('on');
+    changelogModalEl.setAttribute('aria-hidden', 'false');
+    loadChangelog();
+  }
+
+  function closeChangelog() {
+    if (!changelogModalEl) return;
+    changelogModalEl.classList.remove('on');
+    changelogModalEl.setAttribute('aria-hidden', 'true');
+  }
+
+  if (changelogBtn) changelogBtn.addEventListener('click', openChangelog);
+  if (changelogCloseEl) changelogCloseEl.addEventListener('click', closeChangelog);
+  if (changelogModalEl) {
+    changelogModalEl.addEventListener('click', function (e) {
+      if (e.target === changelogModalEl) closeChangelog();
     });
   }
 

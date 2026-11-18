@@ -357,61 +357,32 @@ if (!hasLock) {
   });
 
   /**
-   * 应用内更新：弹窗询问 → 下载安装包 → 自动启动安装程序。
-   * 渲染层只负责传版本信息和展示进度。
+   * 应用内更新：只负责「下载安装包 + 自动启动安装程序」。
+   * 询问用的弹窗在渲染层，用和应用一致的样式画，不调系统对话框。
    */
-  let updateFlowBusy = false;
+  let updateDownloadBusy = false;
 
-  ipcMain.handle("ocarina:update-flow", async (event, rawInfo: unknown) => {
+  ipcMain.handle("ocarina:update-download", async (event, rawInfo: unknown) => {
     const window = getWindowFromSender(event);
 
     if (!window) {
-      return { action: "later" };
+      return { action: "error", error: "窗口不存在" };
     }
 
-    if (updateFlowBusy) {
+    if (updateDownloadBusy) {
       return { action: "busy" };
     }
 
     const info = (rawInfo && typeof rawInfo === "object" ? rawInfo : {}) as Record<string, unknown>;
     const version = typeof info.version === "string" ? info.version.trim() : "";
-    const currentVersion =
-      typeof info.currentVersion === "string" && info.currentVersion.trim()
-        ? info.currentVersion.trim()
-        : app.getVersion();
-    const releaseUrl = typeof info.releaseUrl === "string" ? info.releaseUrl : "";
     const assetUrl = typeof info.assetUrl === "string" ? info.assetUrl : "";
     const assetName = safeInstallerName(info.assetName);
 
-    const canDownload = assetUrl.length > 0 && isAllowedUpdateUrl(assetUrl);
-
-    const { response } = await dialog.showMessageBox(window, {
-      type: "info",
-      title: "发现新版本",
-      message: version ? `发现新版本 v${version}` : "发现新版本",
-      detail: canDownload
-        ? `当前版本 v${currentVersion}。\n\n现在下载并安装吗？下载完成后会自动启动安装程序。`
-        : `当前版本 v${currentVersion}。\n\n这个版本没有可直接下载的安装包，需要到发布页手动下载。`,
-      buttons: canDownload ? ["下载并安装", "稍后", "打开发布页"] : ["打开发布页", "稍后"],
-      defaultId: 0,
-      cancelId: canDownload ? 1 : 1,
-      noLink: true,
-    });
-
-    const manualIndex = canDownload ? 2 : 0;
-
-    if (response === manualIndex) {
-      if (releaseUrl) {
-        await shell.openExternal(releaseUrl);
-      }
-      return { action: "manual" };
+    if (!assetUrl || !isAllowedUpdateUrl(assetUrl)) {
+      return { action: "error", error: "下载地址不合法（只允许 GitHub 发布链接）" };
     }
 
-    if (!canDownload || response !== 0) {
-      return { action: "later" };
-    }
-
-    updateFlowBusy = true;
+    updateDownloadBusy = true;
 
     try {
       const dir = path.join(app.getPath("temp"), "ocarina-update");
@@ -486,7 +457,7 @@ if (!hasLock) {
     } catch (error) {
       return { action: "error", error: error instanceof Error ? error.message : String(error) };
     } finally {
-      updateFlowBusy = false;
+      updateDownloadBusy = false;
     }
   });
 

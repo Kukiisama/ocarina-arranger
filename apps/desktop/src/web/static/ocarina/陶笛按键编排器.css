@@ -385,3 +385,22 @@
   body.printing-keys .keyIcon { color:#3f3f3f !important; }
   body.printing-keys .keyPlus { color:#93825a !important; }
 }
+
+/* ---------- 发现新版本（应用内弹窗） ---------- */
+.updateModalBox{width:min(468px,92vw)}
+.updateModalMeta{margin:0;font-size:12.5px;color:#9fb0c4}
+.updateModalNote{margin:10px 0 0;font-size:12.5px;color:#8b98ab;line-height:1.7}
+
+/* ---------- 更新日志 ---------- */
+.changelogModalBox{width:min(620px,94vw);max-height:76vh;display:flex;flex-direction:column}
+.changelogList{overflow:auto;min-height:0;padding:2px 18px 18px;display:flex;flex-direction:column;gap:18px}
+.changelogEmpty{padding:26px;text-align:center;color:#5c6b80;font-size:12.5px}
+.clVersion{display:flex;align-items:baseline;gap:10px;margin-bottom:6px}
+.clVersion b{font-size:14.5px;color:#e8c46a;letter-spacing:.3px}
+.clVersion span{font-size:11.5px;color:#5c6b80}
+.clItem{display:flex;align-items:flex-start;gap:8px;font-size:12.5px;color:#c3cddb;line-height:1.7;margin:5px 0}
+.clKind{flex:none;padding:1px 6px;border-radius:4px;font-size:10.5px;line-height:1.6}
+.clKind.new{background:rgba(79,209,197,.14);color:#4fd1c5}
+.clKind.fix{background:rgba(224,87,76,.16);color:#e08b84}
+.clKind.improve{background:rgba(232,196,106,.15);color:#e8c46a}
+.clKind.note{background:rgba(139,152,171,.16);color:#9fb0c4}

@@ -256,6 +256,7 @@
         <div class="deviceHead"><span>版本更新</span><span class="devStatus" id="updateStatus">未检查</span></div>
         <div class="deviceRow">
           <button class="tool on" id="updateCheckBtn" type="button">检查更新</button>
+          <button class="tool" id="changelogBtn" type="button">更新日志</button>
           <span class="devHint" id="updateCheckedAt">上次检查：—</span>
         </div>
         <p class="deviceHint" id="updateDetail">启动时会自动检查一次，失败不影响使用。</p>
@@ -299,6 +300,36 @@
   </div>
 </div>
 <div class="toast" id="toast"></div>
+
+<!-- 发现新版本：应用内主题弹窗 -->
+<div class="modal" id="updateModal" aria-hidden="true">
+  <div class="modalBox updateModalBox">
+    <div class="modalHead">
+      <span id="updateModalTitle">发现新版本</span>
+      <button class="modalX" id="updateModalClose" title="关闭">×</button>
+    </div>
+    <p class="updateModalMeta" id="updateModalMeta">—</p>
+    <p class="updateModalNote" id="updateModalNote">下载完成后会自动启动安装程序。</p>
+    <div class="modalFoot">
+      <button class="tool" id="updateModalManual" type="button">打开发布页</button>
+      <button class="tool" id="updateModalLater" type="button">稍后</button>
+      <button class="tool on" id="updateModalDownload" type="button">下载并安装</button>
+    </div>
+  </div>
+</div>
+
+<!-- 更新日志 -->
+<div class="modal" id="changelogModal" aria-hidden="true">
+  <div class="modalBox changelogModalBox">
+    <div class="modalHead">
+      <span>更新日志</span>
+      <button class="modalX" id="changelogClose" title="关闭">×</button>
+    </div>
+    <div class="changelogList" id="changelogList">
+      <div class="changelogEmpty">正在读取…</div>
+    </div>
+  </div>
+</div>
 
 <script src="陶笛按键编排器.js"></script>
 </body>
