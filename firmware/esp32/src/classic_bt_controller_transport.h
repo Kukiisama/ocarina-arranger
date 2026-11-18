@@ -15,6 +15,8 @@ class ClassicBtControllerTransport : public ControllerTransport {
   void setNextStickLevel(int level) override;
   bool resetConnection(bool reconnectLastPeer = false) override;
   bool disconnectPeer() override;
+  void dumpProbeLog(Print &output) override;
+  void probeLog(const char *fmt, ...);
   bool connectPeer() override;
   bool clearStoredPeer() override;
   void printStatus(Print &output) const override;
@@ -49,6 +51,7 @@ class ClassicBtControllerTransport : public ControllerTransport {
       uint16_t congestionRetryBudgetMs);
   bool shouldRetryAfterTransientSendFailure() const;
   bool shouldDelayInputReports() const;
+  void waitForInputReportClearance(uint16_t maxWaitMs);
   uint32_t inputReportsQuietUntilMs() const;
   bool waitForInputReportAccepted(uint32_t expectedEventCount, bool logFailure);
   bool waitForInputReportDrain(uint32_t timeoutMs, bool logFailure);
@@ -77,6 +80,11 @@ class ClassicBtControllerTransport : public ControllerTransport {
   bool hidReady_ = false;
   bool appRegistered_ = false;
   bool discoverable_ = false;
+  static constexpr uint8_t kProbeRingSize = 64;
+  static constexpr uint8_t kProbeLineLen = 100;
+  char probeRing_[kProbeRingSize][kProbeLineLen] = {};
+  uint8_t probeRingHead_ = 0;
+  uint8_t probeRingCount_ = 0;
   bool connected_ = false;
   bool readyForReports_ = false;
   bool authComplete_ = false;

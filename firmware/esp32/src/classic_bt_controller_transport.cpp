@@ -126,7 +126,10 @@ constexpr uint16_t kSniffPrewarmGapMs = 0;
 constexpr uint16_t kSniffPrewarmSettleMs = 0;
 #endif
 constexpr uint16_t kExplicitInputDrainBudgetMs = 100;
-constexpr uint32_t kAutoRecoveryNoAckMs = 2500;
+// 2026-11-19：原先 2500ms 会抢在 kHidCongestionRetryBudgetMs(3000ms) 之前触发自愈，
+// 把正在进行的那条命令直接判失败（探针实测：48 次 reason=8 之后 link close，紧接着按键 begin=fail）。
+constexpr uint32_t kAutoRecoveryNoAckMs = 6000;  // 2026-11-19: 原 2500，会抢在 3000ms 重试预算前砍链路
+constexpr uint16_t kMaxQuietWaitMs = 120;  // 安静窗口最多等这么久，防止被主机模式切换无限续期
 constexpr uint32_t kAutoRecoveryCooldownMs = 15000;
 constexpr uint16_t kIdleDisconnectedReportIntervalMs = 100;
 constexpr uint16_t kReliableInputCongestionRetryBudgetMs =
@@ -206,87 +209,87 @@ String formatBluetoothAddress(const uint8_t address[6]) {
 }
 
 uint8_t kReply02[] = {
-    0x00, 0x8E, 0x00, 0x00, 0x00, 0x00, 0x08, 0x80, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x8E, 0x00, 0x00, 0x00, 0x00, 0x08, 0x80, 0x00, 0x08, 0x80, 0x00,
     0x82, 0x02, 0x04, 0x00, kControllerTypeProCon, 0x02, 0xD4, 0xF0, 0x57, 0x6E,
     0xF0, 0xD7, 0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00};
 
 uint8_t kReply08[] = {
-    0x01, 0x8E, 0x00, 0x00, 0x00, 0x00, 0x08, 0x80, 0x00, 0x00, 0x00, 0x00,
+    0x01, 0x8E, 0x00, 0x00, 0x00, 0x00, 0x08, 0x80, 0x00, 0x08, 0x80, 0x00,
     0x80, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
 uint8_t kReply03[] = {
-    0x04, 0x8E, 0x00, 0x00, 0x00, 0x00, 0x08, 0x80, 0x00, 0x00, 0x00, 0x00,
+    0x04, 0x8E, 0x00, 0x00, 0x00, 0x00, 0x08, 0x80, 0x00, 0x08, 0x80, 0x00,
     0x80, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
 uint8_t kReply04[] = {
-    0x0A, 0x8E, 0x00, 0x00, 0x00, 0x00, 0x08, 0x80, 0x00, 0x00, 0x00, 0x00,
+    0x0A, 0x8E, 0x00, 0x00, 0x00, 0x00, 0x08, 0x80, 0x00, 0x08, 0x80, 0x00,
     0x83, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2C, 0x01,
     0x2C, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
 uint8_t kReplySpiAddress0[] = {
-    0x02, 0x8E, 0x00, 0x00, 0x00, 0x00, 0x08, 0x80, 0x00, 0x00, 0x00, 0x00,
+    0x02, 0x8E, 0x00, 0x00, 0x00, 0x00, 0x08, 0x80, 0x00, 0x08, 0x80, 0x00,
     0x90, 0x10, 0x00, 0x60, 0x00, 0x00, 0x10, 0xff, 0xff, 0xff, 0xff, 0xff,
     0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x00,
     0xff, kControllerTypeProCon, 0xA0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00};
 
 uint8_t kReplySpiAddress50[] = {
-    0x03, 0x8E, 0x00, 0x00, 0x00, 0x00, 0x08, 0x80, 0x00, 0x00, 0x00, 0x00,
+    0x03, 0x8E, 0x00, 0x00, 0x00, 0x00, 0x08, 0x80, 0x00, 0x08, 0x80, 0x00,
     0x90, 0x10, 0x50, 0x60, 0x00, 0x00, 0x0D, 0x23, 0x23, 0x23, 0xff, 0xff,
     0xff, 0x95, 0x15, 0x15, 0x15, 0x15, 0x95, 0xff, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
 uint8_t kReplySpiAddress80[] = {
-    0x0B, 0x8E, 0x00, 0x00, 0x00, 0x00, 0x08, 0x80, 0x00, 0x00, 0x00, 0x00,
+    0x0B, 0x8E, 0x00, 0x00, 0x00, 0x00, 0x08, 0x80, 0x00, 0x08, 0x80, 0x00,
     0x90, 0x10, 0x80, 0x60, 0x00, 0x00, 0x18, 0xff, 0xff, 0xff, 0xff, 0xff,
     0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
     0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00};
 
 uint8_t kReplySpiAddress98[] = {
-    0x0C, 0x8E, 0x00, 0x00, 0x00, 0x00, 0x08, 0x80, 0x00, 0x00, 0x00, 0x00,
+    0x0C, 0x8E, 0x00, 0x00, 0x00, 0x00, 0x08, 0x80, 0x00, 0x08, 0x80, 0x00,
     0x90, 0x10, 0x98, 0x60, 0x00, 0x00, 0x12, 0xff, 0xff, 0xff, 0xff, 0xff,
     0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
     0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
 uint8_t kReplySpiAddress10[] = {
-    0x0D, 0x8E, 0x00, 0x00, 0x00, 0x00, 0x08, 0x80, 0x00, 0x00, 0x00, 0x00,
+    0x0D, 0x8E, 0x00, 0x00, 0x00, 0x00, 0x08, 0x80, 0x00, 0x08, 0x80, 0x00,
     0x90, 0x10, 0x10, 0x80, 0x00, 0x00, 0x18, 0xff, 0xff, 0xff, 0xff, 0xff,
     0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
     0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00};
 
 uint8_t kReplySpiAddress3D[] = {
-    0x0E, 0x8E, 0x00, 0x00, 0x00, 0x00, 0x08, 0x80, 0x00, 0x00, 0x00, 0x00,
+    0x0E, 0x8E, 0x00, 0x00, 0x00, 0x00, 0x08, 0x80, 0x00, 0x08, 0x80, 0x00,
     0x90, 0x10, 0x3D, 0x60, 0x00, 0x00, 0x19, 0x00, 0x07, 0x70, 0x00, 0x08,
     0x80, 0x00, 0x07, 0x70, 0x00, 0x08, 0x80, 0x00, 0x07, 0x70, 0x00, 0x07,
     0x70, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00};
 
 uint8_t kReplySpiAddress20[] = {
-    0x10, 0x8E, 0x00, 0x00, 0x00, 0x00, 0x08, 0x80, 0x00, 0x00, 0x00, 0x00,
+    0x10, 0x8E, 0x00, 0x00, 0x00, 0x00, 0x08, 0x80, 0x00, 0x08, 0x80, 0x00,
     0x90, 0x10, 0x20, 0x60, 0x00, 0x00, 0x18, 0xff, 0xff, 0xff, 0xff, 0xff,
     0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
     0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00};
 
 uint8_t kReply4001[] = {
-    0x15, 0x8E, 0x00, 0x00, 0x00, 0x00, 0x08, 0x80, 0x00, 0x00, 0x00, 0x00,
+    0x15, 0x8E, 0x00, 0x00, 0x00, 0x00, 0x08, 0x80, 0x00, 0x08, 0x80, 0x00,
     0x80, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
 uint8_t kReply4801[] = {
-    0x1A, 0x8E, 0x00, 0x00, 0x00, 0x00, 0x08, 0x80, 0x00, 0x00, 0x00, 0x00,
+    0x1A, 0x8E, 0x00, 0x00, 0x00, 0x00, 0x08, 0x80, 0x00, 0x08, 0x80, 0x00,
     0x80, 0x48, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
 uint8_t kReply3001[] = {
-    0x1C, 0x8E, 0x00, 0x00, 0x00, 0x00, 0x08, 0x80, 0x00, 0x00, 0x00, 0x00,
+    0x1C, 0x8E, 0x00, 0x00, 0x00, 0x00, 0x08, 0x80, 0x00, 0x08, 0x80, 0x00,
     0x80, 0x30, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
@@ -318,7 +321,52 @@ esp_bt_cod_t kDeviceClass = makeDeviceClass();
 
 ClassicBtControllerTransport *ClassicBtControllerTransport::instance_ = nullptr;
 
+#if RHD_PROBE_INPUT
+#include <cstdarg>
+
+void ClassicBtControllerTransport::probeLog(const char *fmt, ...) {
+  char line[kProbeLineLen];
+  va_list args;
+  va_start(args, fmt);
+  vsnprintf(line, sizeof(line), fmt, args);
+  va_end(args);
+
+  // 去掉尾部换行，避免 dump 时出现空行
+  size_t len = strlen(line);
+  while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
+    line[--len] = '\0';
+  }
+
+  Serial.println(line);
+
+  strncpy(probeRing_[probeRingHead_], line, kProbeLineLen - 1);
+  probeRing_[probeRingHead_][kProbeLineLen - 1] = '\0';
+  probeRingHead_ = static_cast<uint8_t>((probeRingHead_ + 1) % kProbeRingSize);
+  if (probeRingCount_ < kProbeRingSize) {
+    probeRingCount_ += 1;
+  }
+}
+
+void ClassicBtControllerTransport::dumpProbeLog(Print &output) {
+  output.printf("INFO probe_dump count=%u\n", static_cast<unsigned>(probeRingCount_));
+  const uint8_t start =
+      probeRingCount_ < kProbeRingSize ? 0 : probeRingHead_;
+  for (uint8_t i = 0; i < probeRingCount_; i++) {
+    const uint8_t index = static_cast<uint8_t>((start + i) % kProbeRingSize);
+    output.println(probeRing_[index]);
+  }
+  output.println("INFO probe_dump end");
+}
+#else
+void ClassicBtControllerTransport::probeLog(const char *fmt, ...) { (void)fmt; }
+void ClassicBtControllerTransport::dumpProbeLog(Print &output) {
+  output.println("INFO probe_dump count=0");
+}
+#endif
 void ClassicBtControllerTransport::begin() {
+#if RHD_PROBE_INPUT
+  probeLog("WARN probe build=ocarina-probe-20261119");
+#endif
   instance_ = this;
   if (inputReportSendMutex_ == nullptr) {
     inputReportSendMutex_ = xSemaphoreCreateRecursiveMutex();
@@ -606,6 +654,16 @@ void ClassicBtControllerTransport::clearInputs() {
   std::memset(report30_, 0, sizeof(report30_));
   report30_[1] = 0x8E;
   report30_[11] = 0x80;
+  // 显式写死摇杆中位：不能只依赖 updateInputReport()——它拿不到锁会直接返回，
+  // 那样缓冲里留下的是 0x00 = 摇杆顶到最左/最上，主机上表现为「镜头被推一下」。
+  const uint8_t stickXLow = static_cast<uint8_t>((kStickCenter << 4) & 0xF0);
+  const uint8_t stickXHigh = static_cast<uint8_t>((kStickCenter & 0xF0) >> 4);
+  report30_[5] = stickXLow;
+  report30_[6] = stickXHigh;
+  report30_[7] = kStickCenter;
+  report30_[8] = stickXLow;
+  report30_[9] = stickXHigh;
+  report30_[10] = kStickCenter;
 
   const uint8_t defaultDummy[] = {0x00, 0x8E, 0x00, 0x00, 0x00, 0x00,
                                   0x08, 0x80, 0x00, 0x08, 0x80};
@@ -762,6 +820,14 @@ uint16_t ClassicBtControllerTransport::idleSendIntervalMs() const {
   }
 
   if (reportCongested_ || consecutiveSendReportFailures_ >= 3) {
+    // 连续拥塞越久退得越狠：给蓝牙栈的发送队列排空的机会，也让主机有机会
+    // 从 sniff 醒过来。否则 15ms 一份地往里灌，队列永远排不空。
+    if (consecutiveSendReportFailures_ >= 20) {
+      return static_cast<uint16_t>(kIdleCongestedReportIntervalMs * 4);
+    }
+    if (consecutiveSendReportFailures_ >= 8) {
+      return static_cast<uint16_t>(kIdleCongestedReportIntervalMs * 2);
+    }
     return kIdleCongestedReportIntervalMs;
   }
 
@@ -785,6 +851,15 @@ bool ClassicBtControllerTransport::shouldDelayInputReports() const {
   return quietUntil != 0 && static_cast<int32_t>(quietUntil - millis()) > 0;
 }
 
+// 等待安静窗口结束，但最多等 maxWaitMs：主机在 sniff/active 之间反复切换时，
+// 每来一个事件窗口都会续期，无上限的 while 会把固件卡死在这里。
+void ClassicBtControllerTransport::waitForInputReportClearance(uint16_t maxWaitMs) {
+  const uint32_t startedAt = millis();
+  while (shouldDelayInputReports() && (millis() - startedAt) < maxWaitMs) {
+    delay(1);
+  }
+}
+
 void ClassicBtControllerTransport::sendTaskTrampoline(void *param) {
   auto *transport = static_cast<ClassicBtControllerTransport *>(param);
   if (kSendTaskStartupDelayMs > 0) {
@@ -798,7 +873,8 @@ void ClassicBtControllerTransport::sendTaskTrampoline(void *param) {
     // 表现为「连按几下之后全部 controller input report failed」且永久不恢复。
     // 这里用「距上次被主机 ACK 超过 2.5 秒」判定链路已死，直接重启蓝牙栈并回连
     // （等价于手动发 BT RESET LAST-PEER），冷却 15 秒避免反复重启。
-    if (transport->connected_ && transport->lastInputReportAcceptedMs_ != 0 &&
+    if (!transport->explicitInputActive_ && transport->connected_ &&
+        transport->lastInputReportAcceptedMs_ != 0 &&
         millis() - transport->lastInputReportAcceptedMs_ > kAutoRecoveryNoAckMs &&
         millis() - transport->lastAutoRecoveryMs_ > kAutoRecoveryCooldownMs) {
       transport->lastAutoRecoveryMs_ = millis();
@@ -807,11 +883,15 @@ void ClassicBtControllerTransport::sendTaskTrampoline(void *param) {
       transport->resetConnection(true);
       transport->lastInputReportAcceptedMs_ = millis();
     }
-    if (kUseFixedSendInterval) {
-      vTaskDelay(pdMS_TO_TICKS(kFixedSendTaskIntervalMs));
-    } else {
-      vTaskDelay(pdMS_TO_TICKS(transport->idleSendIntervalMs()));
+    // 拥塞时走自适应间隔（逐级退避），不再固定 15ms 硬灌，否则蓝牙栈的
+    // 发送队列永远排不空，reason=8 会一直持续到自愈把链路砍掉。
+    uint16_t sendIntervalMs = kUseFixedSendInterval
+                                  ? kFixedSendTaskIntervalMs
+                                  : transport->idleSendIntervalMs();
+    if (transport->reportCongested_ || transport->consecutiveSendReportFailures_ >= 3) {
+      sendIntervalMs = transport->idleSendIntervalMs();
     }
+    vTaskDelay(pdMS_TO_TICKS(sendIntervalMs));
   }
 }
 
@@ -825,7 +905,7 @@ bool ClassicBtControllerTransport::pressButtons(
 #endif
   if (!beginExplicitInput(kWaitForExplicitInputDrain)) {
 #if RHD_PROBE_INPUT
-    Serial.printf("PROBE tap n=%lu begin=fail\n",
+    probeLog("WARN probe tap n=%lu begin=fail\n",
                   static_cast<unsigned long>(probeTapIndex));
 #endif
     return false;
@@ -914,8 +994,7 @@ bool ClassicBtControllerTransport::pressButtons(
   // pa: entry -> primary press accepted（含预热耗时）; gap: 距上次输入报告
   // ACK 的空闲毫秒; pw: sniff 预热耗时（0=未触发）; rf: reinforce window;
   // win: press accepted -> release accepted; span: full tap.
-  Serial.printf(
-      "PROBE tap n=%lu h=%u s=%u gap=%lu pw=%u rf=%u pa=%lu win=%lu span=%lu pok=%d rok=%d fail=%lu\n",
+  probeLog("WARN probe tap n=%lu h=%u s=%u gap=%lu pw=%u rf=%u pa=%lu win=%lu span=%lu pok=%d rok=%d fail=%lu\n",
       static_cast<unsigned long>(probeTapIndex),
       holdMs,
       settleMs,
@@ -1295,6 +1374,17 @@ bool ClassicBtControllerTransport::sendCurrentInputReport(bool logFailure, bool 
     lastSendReportStatus_ = static_cast<int>(err);
     lastSendReportReason_ = 0;
     lastSendReportId_ = 0x30;
+#if RHD_PROBE_INPUT
+    probeLog("WARN probe sndfail err=%s conn=%d pair=%d ready=%d reset=%d consec=%u total=%lu t=%lu\n",
+        esp_err_to_name(err),
+        connected_ ? 1 : 0,
+        paired_ ? 1 : 0,
+        readyForReports_ ? 1 : 0,
+        resetting_ ? 1 : 0,
+        static_cast<unsigned>(consecutiveSendReportFailures_),
+        static_cast<unsigned long>(sendReportFailureCount_),
+        static_cast<unsigned long>(millis()));
+#endif
     readyForReports_ = isHidReportChannelOpen();
     if (logFailure) {
       Serial.printf(
@@ -1326,6 +1416,16 @@ bool ClassicBtControllerTransport::waitForInputReportAccepted(
             HID_SEND_REPORT_TIMEOUT_MS,
             static_cast<unsigned long>(inputReportSubmitCount_),
             static_cast<unsigned long>(inputReportSendEventCount_));
+#if RHD_PROBE_INPUT
+        probeLog("WARN probe acktimeout waited=%u submitted=%lu completed=%lu connected=%d consec=%u t=%lu\n",
+            static_cast<unsigned>(HID_SEND_REPORT_TIMEOUT_MS),
+            static_cast<unsigned long>(inputReportSubmitCount_),
+            static_cast<unsigned long>(inputReportSendEventCount_),
+            connected_ ? 1 : 0,
+            static_cast<unsigned>(consecutiveSendReportFailures_),
+            static_cast<unsigned long>(millis()));
+#endif
+
       }
       return false;
     }
@@ -1387,9 +1487,7 @@ bool ClassicBtControllerTransport::beginExplicitInput(bool waitForDrain) {
   }
 
   xSemaphoreTakeRecursive(inputReportSendMutex_, portMAX_DELAY);
-  while (shouldDelayInputReports()) {
-    delay(1);
-  }
+    waitForInputReportClearance(kMaxQuietWaitMs);
   if (!isControllerInputReady()) {
     Serial.printf(
         "WARN bt explicit_input blocked connected=%s paired=%s ready=%s\n",
@@ -1462,9 +1560,7 @@ bool ClassicBtControllerTransport::repeatCurrentInputReportUs(
   bool loggedCongestionRetry = false;
 
   while (true) {
-    while (shouldDelayInputReports()) {
-      delay(1);
-    }
+    waitForInputReportClearance(kMaxQuietWaitMs);
 
     if (!sendCurrentInputReport(logFailure, waitForSendEvent)) {
       if (shouldRetryAfterTransientSendFailure()) {
@@ -1803,7 +1899,9 @@ void ClassicBtControllerTransport::handleGapEvent(int event, void *rawParam) {
     }
     case ESP_BT_GAP_MODE_CHG_EVT:
       Serial.printf("INFO bt mode-change mode=%u\n", param->mode_chg.mode);
-      if (connected_ && kModeChangeReportQuietMs > 0 &&
+      // 演奏期间不延长安静窗口：否则主机每次进 sniff 都把这窗口续 300ms，
+      // beginExplicitInput 的 while 循环会永远等不完（2026-11-19 定位到卡死根因）。
+      if (connected_ && !explicitInputActive_ && kModeChangeReportQuietMs > 0 &&
           param->mode_chg.mode != ESP_BT_PM_MD_ACTIVE) {
         inputReportsQuietUntilMs_ = millis() + kModeChangeReportQuietMs;
       }
@@ -1875,6 +1973,12 @@ void ClassicBtControllerTransport::handleHidEvent(int event, void *rawParam) {
       }
       break;
     case ESP_HIDD_OPEN_EVT:
+#if RHD_PROBE_INPUT
+      probeLog("WARN probe link open status=%d conn=%d t=%lu\n",
+                    static_cast<int>(param->open.status),
+                    static_cast<int>(param->open.conn_status),
+                    static_cast<unsigned long>(millis()));
+#endif
       connected_ = param->open.status == ESP_HIDD_SUCCESS &&
                    param->open.conn_status == ESP_HIDD_CONN_STATE_CONNECTED;
       readyForReports_ = connected_ && appRegistered_ && hidReady_;
@@ -1908,6 +2012,12 @@ void ClassicBtControllerTransport::handleHidEvent(int event, void *rawParam) {
           connected_ ? formatBluetoothAddress(lastPeerAddress_).c_str() : "unknown");
       break;
     case ESP_HIDD_CLOSE_EVT:
+#if RHD_PROBE_INPUT
+      probeLog("WARN probe link close status=%d conn=%d t=%lu\n",
+                    static_cast<int>(param->close.status),
+                    static_cast<int>(param->close.conn_status),
+                    static_cast<unsigned long>(millis()));
+#endif
       lastHidCloseStatus_ = param->close.status;
       lastHidCloseConnStatus_ = param->close.conn_status;
       enterReconnectableState("hid-close");
@@ -1928,6 +2038,17 @@ void ClassicBtControllerTransport::handleHidEvent(int event, void *rawParam) {
       lastSendReportStatus_ = param->send_report.status;
       lastSendReportReason_ = param->send_report.reason;
       lastSendReportId_ = param->send_report.report_id;
+#if RHD_PROBE_INPUT
+      if (param->send_report.status != ESP_HIDD_SUCCESS) {
+        probeLog("WARN probe evtfail id=0x%02x status=%d reason=%d conn=%d consec=%u t=%lu\n",
+            static_cast<unsigned>(param->send_report.report_id),
+            static_cast<int>(param->send_report.status),
+            static_cast<int>(param->send_report.reason),
+            connected_ ? 1 : 0,
+            static_cast<unsigned>(consecutiveSendReportFailures_),
+            static_cast<unsigned long>(millis()));
+      }
+#endif
       if (param->send_report.report_id == 0x30) {
         lastInputReportStatus_ = param->send_report.status;
         lastInputReportReason_ = param->send_report.reason;
@@ -2033,7 +2154,52 @@ void ClassicBtControllerTransport::onHidEvent(int event, void *param) {
 
 ClassicBtControllerTransport *ClassicBtControllerTransport::instance_ = nullptr;
 
-void ClassicBtControllerTransport::begin() {}
+#if RHD_PROBE_INPUT
+#include <cstdarg>
+
+void ClassicBtControllerTransport::probeLog(const char *fmt, ...) {
+  char line[kProbeLineLen];
+  va_list args;
+  va_start(args, fmt);
+  vsnprintf(line, sizeof(line), fmt, args);
+  va_end(args);
+
+  // 去掉尾部换行，避免 dump 时出现空行
+  size_t len = strlen(line);
+  while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
+    line[--len] = '\0';
+  }
+
+  Serial.println(line);
+
+  strncpy(probeRing_[probeRingHead_], line, kProbeLineLen - 1);
+  probeRing_[probeRingHead_][kProbeLineLen - 1] = '\0';
+  probeRingHead_ = static_cast<uint8_t>((probeRingHead_ + 1) % kProbeRingSize);
+  if (probeRingCount_ < kProbeRingSize) {
+    probeRingCount_ += 1;
+  }
+}
+
+void ClassicBtControllerTransport::dumpProbeLog(Print &output) {
+  output.printf("INFO probe_dump count=%u\n", static_cast<unsigned>(probeRingCount_));
+  const uint8_t start =
+      probeRingCount_ < kProbeRingSize ? 0 : probeRingHead_;
+  for (uint8_t i = 0; i < probeRingCount_; i++) {
+    const uint8_t index = static_cast<uint8_t>((start + i) % kProbeRingSize);
+    output.println(probeRing_[index]);
+  }
+  output.println("INFO probe_dump end");
+}
+#else
+void ClassicBtControllerTransport::probeLog(const char *fmt, ...) { (void)fmt; }
+void ClassicBtControllerTransport::dumpProbeLog(Print &output) {
+  output.println("INFO probe_dump count=0");
+}
+#endif
+void ClassicBtControllerTransport::begin() {
+#if RHD_PROBE_INPUT
+  probeLog("WARN probe build=ocarina-probe-20261119");
+#endif}
 
 bool ClassicBtControllerTransport::pressButtons(
     uint32_t buttonsMask, uint16_t holdMs, uint16_t settleMs) {

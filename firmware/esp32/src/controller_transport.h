@@ -81,6 +81,7 @@ class ControllerTransport {
   virtual bool resetConnection(bool reconnectLastPeer = false) = 0;
   virtual bool clearStoredPeer() = 0;
   // 主动与主机断开/回连（保持配对，不重启蓝牙栈）
+  virtual void dumpProbeLog(Print &output) { (void)output; }
   virtual bool disconnectPeer() { return false; }
   virtual bool connectPeer() { return false; }
   virtual void printStatus(Print &output) const = 0;

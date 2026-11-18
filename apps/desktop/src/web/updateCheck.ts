@@ -9,6 +9,13 @@
 
 export type UpdateStatus = "latest" | "outdated" | "unknown";
 
+export interface UpdateAsset {
+  /** 直链（browser_download_url） */
+  url: string;
+  name: string;
+  size: number | null;
+}
+
 export interface UpdateCheckResult {
   status: UpdateStatus;
   currentVersion: string;
@@ -16,6 +23,8 @@ export interface UpdateCheckResult {
   releaseName: string | null;
   releaseUrl: string | null;
   publishedAt: string | null;
+  /** 该 Release 里找到的 Windows 安装包（没有就是 null） */
+  asset: UpdateAsset | null;
   checkedAt: number;
   /** 失败原因码：NO_RELEASE / TIMEOUT / BAD_TAG / HTTP 4xx / 原始错误信息 */
   error: string | null;
@@ -135,6 +144,46 @@ function describeFetchError(error: unknown): string {
   return String(error);
 }
 
+/**
+ * 从 Release 的 assets 里挑一个 Windows 安装包：
+ * 优先 .exe、名字里带 win，多个的话取最大的（安装包通常最大）。
+ */
+export function pickInstallerAsset(rawAssets: unknown): UpdateAsset | null {
+  if (!Array.isArray(rawAssets)) {
+    return null;
+  }
+
+  const candidates: UpdateAsset[] = [];
+
+  for (const item of rawAssets) {
+    if (!item || typeof item !== "object") continue;
+
+    const asset = item as Record<string, unknown>;
+    const name = typeof asset.name === "string" ? asset.name : "";
+    const url = typeof asset.browser_download_url === "string" ? asset.browser_download_url : "";
+
+    if (!name || !url || !/\.exe$/iu.test(name)) continue;
+    if (!/^https:\/\//iu.test(url)) continue;
+
+    candidates.push({
+      url,
+      name,
+      size: typeof asset.size === "number" && Number.isFinite(asset.size) ? asset.size : null,
+    });
+  }
+
+  if (!candidates.length) {
+    return null;
+  }
+
+  const windowsOnes = candidates.filter((asset) => /win/iu.test(asset.name));
+  const pool = windowsOnes.length ? windowsOnes : candidates;
+
+  return pool.reduce((best, current) =>
+    (current.size ?? 0) > (best.size ?? 0) ? current : best,
+  );
+}
+
 async function fetchLatestRelease(input: {
   url: string;
   currentVersion: string;
@@ -148,6 +197,7 @@ async function fetchLatestRelease(input: {
     releaseName: null,
     releaseUrl: null,
     publishedAt: null,
+    asset: null,
     checkedAt,
     error: null,
   } satisfies Omit<UpdateCheckResult, "status">;
@@ -171,6 +221,7 @@ async function fetchLatestRelease(input: {
       name?: unknown;
       html_url?: unknown;
       published_at?: unknown;
+      assets?: unknown;
     };
     const rawTag = normalizeVersion(typeof payload.tag_name === "string" ? payload.tag_name : "");
     const latestVersion = VERSION_PATTERN.test(rawTag) ? rawTag : "";
@@ -186,6 +237,7 @@ async function fetchLatestRelease(input: {
       releaseName: typeof payload.name === "string" ? payload.name : null,
       releaseUrl: typeof payload.html_url === "string" ? payload.html_url : null,
       publishedAt: typeof payload.published_at === "string" ? payload.published_at : null,
+      asset: pickInstallerAsset(payload.assets),
       checkedAt,
       error: null,
     };

@@ -650,6 +650,11 @@ bool executeCommand(const String &line, SwitchController &controller, String &er
     return true;
   }
 
+  if (line == "PROBE" || line == "PROBE DUMP") {
+    controller.dumpProbeLog(Serial);
+    return true;
+  }
+
   if (line == "I") {
     Serial.printf("INFO transport=%s\n", controller.transportName());
     controller.printTransportStatus(Serial);

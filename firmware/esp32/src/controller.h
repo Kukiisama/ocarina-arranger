@@ -32,6 +32,7 @@ class SwitchController {
   bool resetBluetooth(bool reconnectLastPeer = false);
   bool clearBluetoothPeer();
   bool disconnectBluetooth();
+  void dumpProbeLog(Print &output);
   bool connectBluetooth();
   void pause();
   void resume();

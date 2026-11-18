@@ -5,6 +5,7 @@ import {
   checkForUpdate,
   compareVersions,
   normalizeVersion,
+  pickInstallerAsset,
   releasesApiUrl,
 } from "../src/web/updateCheck.js";
 
@@ -65,7 +66,52 @@ test("checkForUpdate：远端更新时返回 outdated", async () => {
   assert.equal(result.latestVersion, "1.1.3");
   assert.equal(result.currentVersion, "1.1.2");
   assert.equal(result.releaseUrl, "https://github.com/Kukiisama/ocarina-arranger/releases/tag/v1.1.3");
+  assert.equal(result.asset, null);
   assert.equal(result.error, null);
+});
+
+test("pickInstallerAsset：挑 .exe、优先带 win、多个取最大", () => {
+  const picked = pickInstallerAsset([
+    { name: "notes.txt", browser_download_url: "https://github.com/a/b/releases/download/v1/notes.txt", size: 10 },
+    { name: "Ocarina Arranger-1.2.0-win-x64.exe", browser_download_url: "https://github.com/a/b/releases/download/v1/x64.exe", size: 90_000_000 },
+    { name: "Ocarina Arranger-1.2.0-win-arm64.exe", browser_download_url: "https://github.com/a/b/releases/download/v1/arm64.exe", size: 95_000_000 },
+    { name: "setup-linux.AppImage", browser_download_url: "https://github.com/a/b/releases/download/v1/app.AppImage", size: 99_000_000 },
+  ]);
+
+  assert.equal(picked?.name, "Ocarina Arranger-1.2.0-win-arm64.exe");
+  assert.equal(picked?.size, 95_000_000);
+});
+
+test("pickInstallerAsset：没有 exe 或地址不是 https 时返回 null", () => {
+  assert.equal(pickInstallerAsset([{ name: "a.zip", browser_download_url: "https://x/a.zip", size: 1 }]), null);
+  assert.equal(
+    pickInstallerAsset([{ name: "a.exe", browser_download_url: "http://x/a.exe", size: 1 }]),
+    null,
+  );
+  assert.equal(pickInstallerAsset(null), null);
+});
+
+test("checkForUpdate：把 release 里的安装包带出来", async () => {
+  const result = await checkForUpdate({
+    currentVersion: "1.2.0",
+    repoUrl: "https://github.com/Kukiisama/ocarina-arranger",
+    force: true,
+    fetchImpl: stubFetch({
+      tag_name: "v1.2.1",
+      html_url: "https://github.com/Kukiisama/ocarina-arranger/releases/tag/v1.2.1",
+      assets: [
+        {
+          name: "Ocarina Arranger-1.2.1-win-x64.exe",
+          browser_download_url: "https://github.com/Kukiisama/ocarina-arranger/releases/download/v1.2.1/setup.exe",
+          size: 88_000_000,
+        },
+      ],
+    }),
+  });
+
+  assert.equal(result.status, "outdated");
+  assert.equal(result.asset?.name, "Ocarina Arranger-1.2.1-win-x64.exe");
+  assert.match(result.asset?.url ?? "", /releases\/download\/v1\.2\.1\/setup\.exe$/u);
 });
 
 test("checkForUpdate：远端同版本返回 latest", async () => {

@@ -1230,6 +1230,27 @@
     }
   }
 
+  // 把串口底层报错翻成人话，优先让人去查线材
+  function friendlySerialError(message) {
+    const text = String(message || '');
+
+    if (/File not found|ENOENT|cannot find the file/i.test(text)) {
+      return '打不开串口：系统里已经没有这个设备了。\n' +
+        '最常见是 USB 线松动 / 接触不良（也可能是只供电不传数据的线、或经过 hub 掉线）。\n' +
+        '请先检查线和接口——换口、换线、拔插一遍，再点「刷新」重新选端口。';
+    }
+
+    if (/Access denied|Access is denied|EBUSY|being used by another process|Permission denied|PermissionError|Resource temporarily unavailable/i.test(text)) {
+      return '串口被别的程序占用了：先点「断开」，或关掉 PlatformIO 监视器 / 串口助手之类的程序，再试一次。';
+    }
+
+    if (/Timed out|timeout|ACK/i.test(text)) {
+      return '开发板没有回应：确认固件在运行、波特率 115200；不行就拔插板子再试。';
+    }
+
+    return text;
+  }
+
   async function sendDeviceCommand(cmd) {
     const port = devPort && devPort.value;
     if (!port) { devLogLine('请先选择串口'); return; }
@@ -1247,7 +1268,7 @@
       if (data.error) devLogLine('! ' + data.error);
       if (devStatus) { devStatus.textContent = '已连接 ' + port; devStatus.classList.add('on'); }
     } catch (e) {
-      devLogLine('! ' + e.message);
+      devLogLine('! ' + friendlySerialError(e.message));
     }
   }
 
@@ -1296,7 +1317,7 @@
             });
             devLogLine('已通知开发板断开主机');
           } catch (e) {
-            devLogLine('断开主机失败（继续释放串口）：' + e.message);
+            devLogLine('断开主机失败（继续释放串口）：' + friendlySerialError(e.message));
           }
         }
 
@@ -1305,7 +1326,7 @@
         });
         devLogLine('已断开串口');
         if (devStatus) { devStatus.textContent = '未连接'; devStatus.classList.remove('on'); }
-      } catch (e) { devLogLine('断开失败：' + e.message); }
+      } catch (e) { devLogLine('断开失败：' + friendlySerialError(e.message)); }
     });
   }
   let performing = false;
@@ -1358,7 +1379,7 @@
       if (data.error) devLogLine('! ' + data.error);
       devLogLine('演奏结束');
     } catch (e) {
-      devLogLine('! ' + e.message);
+      devLogLine('! ' + friendlySerialError(e.message));
     } finally {
       setPerforming(false);
     }
@@ -2315,8 +2336,82 @@
     }
   }
 
+  // 发现新版本 → 弹窗（下载并安装 / 稍后 / 打开发布页），下载进度实时显示在关于页
+  let updatePromptedThisRun = false;
+  let updateDownloading = false;
+
+  async function promptUpdateFlow(result) {
+    if (updateDownloading) return;
+    if (!result || result.status !== 'outdated' || !result.latestVersion) return;
+
+    const api = window.friendMakerWindow;
+
+    // 非 Electron（浏览器直接打开）时退回打开发布页
+    if (!api || typeof api.promptUpdate !== 'function') {
+      if (result.releaseUrl) window.open(result.releaseUrl, '_blank');
+      return;
+    }
+
+    updateDownloading = true;
+    if (updateBtn) updateBtn.disabled = true;
+
+    try {
+      const outcome = (await api.promptUpdate({
+        version: result.latestVersion,
+        currentVersion: result.currentVersion,
+        releaseUrl: result.releaseUrl || '',
+        assetUrl: result.asset ? result.asset.url : null,
+        assetName: result.asset ? result.asset.name : null
+      })) || {};
+
+      if (outcome.action === 'installed') {
+        setUpdateStatus('已下载', 'on');
+        if (updateDetailEl) updateDetailEl.textContent = '安装包已下载并启动，按提示完成安装即可。';
+        toast('安装包已启动，按提示完成安装');
+      } else if (outcome.action === 'manual') {
+        toast('已在浏览器打开发布页');
+      } else if (outcome.action === 'later') {
+        toast('已跳过，可随时在「关于」页更新');
+      } else if (outcome.action === 'busy') {
+        toast('更新正在处理中，请稍候');
+      } else if (outcome.action === 'error') {
+        setUpdateStatus('更新失败', '');
+        if (updateDetailEl) updateDetailEl.textContent = '更新失败：' + (outcome.error || '未知错误');
+        toast('更新失败：' + (outcome.error || '未知错误'));
+      }
+    } catch (e) {
+      setUpdateStatus('更新失败', '');
+      if (updateDetailEl) updateDetailEl.textContent = '更新失败：' + e.message;
+      toast('更新失败：' + e.message);
+    } finally {
+      updateDownloading = false;
+      if (updateBtn) updateBtn.disabled = false;
+    }
+  }
+
+  // 下载进度 → 关于页那行小字
+  if (window.friendMakerWindow && typeof window.friendMakerWindow.onUpdateProgress === 'function') {
+    window.friendMakerWindow.onUpdateProgress(function (p) {
+      if (!p) return;
+      const pct = typeof p.percent === 'number' ? p.percent : null;
+      setUpdateStatus(pct === null ? '下载中…' : '下载中 ' + pct + '%', 'warn');
+      if (updateDetailEl) {
+        updateDetailEl.textContent = '正在下载 v' + (p.version || '') +
+          (pct === null
+            ? '：' + (p.received / 1048576).toFixed(1) + ' MB'
+            : '：' + pct + '%（' + (p.received / 1048576).toFixed(1) + ' MB）');
+      }
+    });
+  }
+
   if (updateBtn) {
-    updateBtn.addEventListener('click', function () { checkUpdate(true); });
+    updateBtn.addEventListener('click', function () {
+      checkUpdate(true).then(function (result) {
+        if (result && result.status === 'outdated' && result.latestVersion) {
+          promptUpdateFlow(result);
+        }
+      });
+    });
   }
 
   if (updateDetailEl) {
@@ -2325,11 +2420,12 @@
     });
   }
 
-  // 启动自动检查：延迟 1.5 秒静默进行，失败不弹窗、不影响任何功能
+  // 启动自动检查：延迟 1.5 秒静默进行；发现新版本就弹窗询问（本次运行只弹一次）
   window.setTimeout(function () {
     checkUpdate(false).then(function (result) {
-      if (result && result.status === 'outdated' && result.latestVersion) {
-        toast('发现新版本 v' + result.latestVersion);
+      if (result && result.status === 'outdated' && result.latestVersion && !updatePromptedThisRun) {
+        updatePromptedThisRun = true;
+        promptUpdateFlow(result);
       }
     }).catch(function () {});
   }, 1500);

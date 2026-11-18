@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, net, shell } from "electron";
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync } from "node:fs";
+import { appendFileSync, createWriteStream, existsSync } from "node:fs";
 import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -169,6 +169,30 @@ async function ensureWritableFirmwareRoot(): Promise<string> {
   return targetRoot;
 }
 
+// 更新包只允许从 GitHub 的下载域名拉取
+const UPDATE_ALLOWED_HOSTS = new Set([
+  "github.com",
+  "objects.githubusercontent.com",
+  "release-assets.githubusercontent.com",
+  "codeload.github.com",
+]);
+
+function isAllowedUpdateUrl(raw: string): boolean {
+  try {
+    const url = new URL(raw);
+    return url.protocol === "https:" && UPDATE_ALLOWED_HOSTS.has(url.hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+/** 安装包文件名只取 basename，去掉 Windows 非法字符，强制 .exe */
+function safeInstallerName(raw: unknown): string {
+  const base = typeof raw === "string" ? path.basename(raw) : "";
+  const cleaned = base.replace(/[\\/:*?"<>|]/gu, "_").trim();
+  return /\.exe$/iu.test(cleaned) && cleaned.length > 4 ? cleaned : "ocarina-update-setup.exe";
+}
+
 // 检查更新走 Electron 自己的网络栈（Chromium）：它用 Windows 证书库和系统代理，
 // 比 Node 自带的 fetch 更容易过掉本地代理 / 加速器造成的证书链问题。
 function createUpdateFetcher(): typeof fetch {
@@ -329,6 +353,140 @@ if (!hasLock) {
       return { ok: true, filePath: result.filePath };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  /**
+   * 应用内更新：弹窗询问 → 下载安装包 → 自动启动安装程序。
+   * 渲染层只负责传版本信息和展示进度。
+   */
+  let updateFlowBusy = false;
+
+  ipcMain.handle("ocarina:update-flow", async (event, rawInfo: unknown) => {
+    const window = getWindowFromSender(event);
+
+    if (!window) {
+      return { action: "later" };
+    }
+
+    if (updateFlowBusy) {
+      return { action: "busy" };
+    }
+
+    const info = (rawInfo && typeof rawInfo === "object" ? rawInfo : {}) as Record<string, unknown>;
+    const version = typeof info.version === "string" ? info.version.trim() : "";
+    const currentVersion =
+      typeof info.currentVersion === "string" && info.currentVersion.trim()
+        ? info.currentVersion.trim()
+        : app.getVersion();
+    const releaseUrl = typeof info.releaseUrl === "string" ? info.releaseUrl : "";
+    const assetUrl = typeof info.assetUrl === "string" ? info.assetUrl : "";
+    const assetName = safeInstallerName(info.assetName);
+
+    const canDownload = assetUrl.length > 0 && isAllowedUpdateUrl(assetUrl);
+
+    const { response } = await dialog.showMessageBox(window, {
+      type: "info",
+      title: "发现新版本",
+      message: version ? `发现新版本 v${version}` : "发现新版本",
+      detail: canDownload
+        ? `当前版本 v${currentVersion}。\n\n现在下载并安装吗？下载完成后会自动启动安装程序。`
+        : `当前版本 v${currentVersion}。\n\n这个版本没有可直接下载的安装包，需要到发布页手动下载。`,
+      buttons: canDownload ? ["下载并安装", "稍后", "打开发布页"] : ["打开发布页", "稍后"],
+      defaultId: 0,
+      cancelId: canDownload ? 1 : 1,
+      noLink: true,
+    });
+
+    const manualIndex = canDownload ? 2 : 0;
+
+    if (response === manualIndex) {
+      if (releaseUrl) {
+        await shell.openExternal(releaseUrl);
+      }
+      return { action: "manual" };
+    }
+
+    if (!canDownload || response !== 0) {
+      return { action: "later" };
+    }
+
+    updateFlowBusy = true;
+
+    try {
+      const dir = path.join(app.getPath("temp"), "ocarina-update");
+      await mkdir(dir, { recursive: true });
+      const target = path.join(dir, assetName);
+
+      const download = await net.fetch(assetUrl, {
+        headers: { "user-agent": "ocarina-arranger" },
+      });
+
+      if (!download.ok || !download.body) {
+        return { action: "error", error: `下载失败：HTTP ${download.status}` };
+      }
+
+      const total = Number(download.headers.get("content-length") ?? 0) || 0;
+      const stream = createWriteStream(target);
+      const reader = download.body.getReader();
+      let received = 0;
+      let lastSentAt = 0;
+
+      for (;;) {
+        const chunk = await reader.read();
+
+        if (chunk.done) {
+          break;
+        }
+
+        if (!chunk.value) {
+          continue;
+        }
+
+        received += chunk.value.byteLength;
+        const ok = stream.write(Buffer.from(chunk.value));
+
+        if (!ok) {
+          await new Promise<void>((resolve) => stream.once("drain", () => resolve()));
+        }
+
+        const now = Date.now();
+
+        if (now - lastSentAt > 200) {
+          lastSentAt = now;
+          window.webContents.send("ocarina:update-progress", {
+            version,
+            received,
+            total,
+            percent: total > 0 ? Math.round((received / total) * 100) : null,
+          });
+        }
+      }
+
+      await new Promise<void>((resolve, reject) => {
+        stream.once("error", reject);
+        stream.end(() => resolve());
+      });
+
+      window.webContents.send("ocarina:update-progress", {
+        version,
+        received,
+        total,
+        percent: 100,
+      });
+
+      // 自动启动安装程序
+      const openError = await shell.openPath(target);
+
+      if (openError) {
+        return { action: "error", error: `安装包已下载，但启动失败：${openError}`, filePath: target };
+      }
+
+      return { action: "installed", filePath: target };
+    } catch (error) {
+      return { action: "error", error: error instanceof Error ? error.message : String(error) };
+    } finally {
+      updateFlowBusy = false;
     }
   });
 
