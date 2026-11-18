@@ -23,6 +23,11 @@ import {
 } from "../drawingTemplates.js";
 import { ABOUT_INFO, resolveAppVersion } from "./about.js";
 import {
+  loadScoreFile,
+  loadScoreIndex,
+  resolveScoreSources,
+} from "./scoreLibrary.js";
+import {
   FirmwareToolingManager,
   type ToolingConfig,
 } from "./firmwareTooling.js";
@@ -129,6 +134,8 @@ interface WebRuntimeConfig {
   /** 「关于」页显示的版本号 */
   appVersion: string;
   updateFetcher: typeof fetch | null;
+  /** 谱面库镜像地址（按优先级依次尝试） */
+  scoreSources: string[];
   refreshFirmwareRoot?: (() => Promise<string>) | undefined;
   toolingManager: FirmwareToolingManager;
   windowsSerialDriverManager: WindowsSerialDriverManager;
@@ -143,6 +150,7 @@ let webRuntime: WebRuntimeConfig = {
   firmwareRoot: defaultFirmwareRoot,
   appVersion: resolveAppVersion(),
   updateFetcher: null,
+  scoreSources: resolveScoreSources(),
   refreshFirmwareRoot: undefined,
   toolingManager: new FirmwareToolingManager({ appDataRoot: defaultAppDataRoot }),
   windowsSerialDriverManager: new WindowsSerialDriverManager(defaultWindowsDriverRoot),
@@ -1522,6 +1530,60 @@ async function handleUpdateCheck(url: URL, response: ServerResponse): Promise<vo
   json(response, 200, { ...result });
 }
 
+function scoreFetchImpl(): typeof fetch {
+  return webRuntime.updateFetcher ?? fetch;
+}
+
+async function handleScoreIndex(url: URL, response: ServerResponse): Promise<void> {
+  const result = await loadScoreIndex({
+    fetchImpl: scoreFetchImpl(),
+    sources: webRuntime.scoreSources,
+    force: url.searchParams.get("force") === "1",
+  });
+
+  if (!result.ok) {
+    json(response, 200, { ok: false, error: result.error, scores: [] });
+    return;
+  }
+
+  json(response, 200, { ok: true, source: result.source, scores: result.scores });
+}
+
+async function handleScoreFile(url: URL, response: ServerResponse): Promise<void> {
+  const id = url.searchParams.get("id") ?? "";
+  const index = await loadScoreIndex({
+    fetchImpl: scoreFetchImpl(),
+    sources: webRuntime.scoreSources,
+  });
+
+  if (!index.ok) {
+    json(response, 200, { ok: false, error: index.error });
+    return;
+  }
+
+  // 只认目录里登记过的 id，避免拿任意路径去服务器上读
+  const entry = index.scores.find((item) => item.id === id);
+
+  if (!entry) {
+    json(response, 404, { ok: false, error: "谱面库里没有这个谱面" });
+    return;
+  }
+
+  const file = await loadScoreFile({
+    entry,
+    fetchImpl: scoreFetchImpl(),
+    sources: webRuntime.scoreSources,
+  });
+
+  if (!file.ok) {
+    json(response, 200, { ok: false, error: file.error });
+    return;
+  }
+
+  response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+  response.end(file.text);
+}
+
 async function executeCommands(body: {
   commands?: string[];
   target?: "simulate" | "serial";
@@ -2467,6 +2529,16 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
       return;
     }
 
+    if (request.method === "GET" && url.pathname === "/api/scores") {
+      await handleScoreIndex(url, response);
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/scores/file") {
+      await handleScoreFile(url, response);
+      return;
+    }
+
     if (request.method === "GET" && url.pathname === "/api/firmware/info") {
       await handleFirmwareInfo(response);
       return;
@@ -2610,6 +2682,7 @@ export async function startWebServer(
       firmwareRoot: options.firmwareRoot ?? defaultFirmwareRoot,
       appVersion: resolveAppVersion(options.appVersion),
       updateFetcher: options.updateFetcher ?? null,
+      scoreSources: resolveScoreSources(),
       refreshFirmwareRoot: options.refreshFirmwareRoot,
       toolingManager: new FirmwareToolingManager({
         appDataRoot: options.appDataRoot ?? defaultAppDataRoot,

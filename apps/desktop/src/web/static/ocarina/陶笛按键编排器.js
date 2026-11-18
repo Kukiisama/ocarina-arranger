@@ -50,6 +50,7 @@
 
   /* ---------------- 状态 ---------------- */
   let notes = [];               // { id, midi, col, mapping }
+  let breaks = [];              // 断句：{ col, midi }，Ctrl+左键 添加/取消
   let cols = COLS_UNIT;         // 当前列数
   let colW = 52;                // 单格宽度（按可视宽度自适应）
   let bpm = 120;                // 每分钟四分音符数
@@ -271,7 +272,11 @@
 
   /* ---------------- 核心操作 ---------------- */
   function snapshot() {
-    undoStack.push({ notes: notes.map(n => ({ id: n.id, midi: n.midi, col: n.col, len: n.len, mapping: n.mapping })), cols: cols });
+    undoStack.push({
+      notes: notes.map(n => ({ id: n.id, midi: n.midi, col: n.col, len: n.len, mapping: n.mapping })),
+      breaks: breaks.map(b => ({ col: b.col, midi: b.midi })),
+      cols: cols
+    });
     if (undoStack.length > 120) undoStack.shift();
   }
 
@@ -318,6 +323,20 @@
     if (i < 0) return;
     snapshot();
     notes.splice(i, 1);
+    render();
+  }
+
+  // 断句：同一列只保留一个；再按一次取消
+  function toggleBreak(col, midi) {
+    const i = breaks.findIndex(b => b.col === col);
+    snapshot();
+    if (i >= 0) {
+      breaks.splice(i, 1);
+      toast('已取消第 ' + (col + 1) + ' 格的断句');
+    } else {
+      breaks.push({ col: col, midi: midi });
+      toast('第 ' + (col + 1) + ' 格断开（仅按键谱从这里换句）');
+    }
     render();
   }
 
@@ -405,6 +424,22 @@
       });
       b.addEventListener('contextmenu', ev => { ev.preventDefault(); removeById(s.id); });
       inner.appendChild(b);
+    });
+
+    // 断句方块（白色小方块，标记这句话在这里断开）
+    Array.prototype.forEach.call(inner.querySelectorAll('.brk'), el => el.remove());
+    breaks.forEach(b => {
+      const n = byMidi.get(b.midi);
+      const row = n ? ROWS.indexOf(n) : -1;
+      if (row < 0) return;
+      const el = document.createElement('div');
+      el.className = 'brk';
+      el.style.left = (b.col * colW + 2) + 'px';
+      el.style.top = (row * ROW_H + 3) + 'px';
+      el.style.width = Math.max(8, colW - 6) + 'px';
+      el.style.height = (ROW_H - 5) + 'px';
+      el.title = '第 ' + (b.col + 1) + ' 格断句 · Ctrl+左键 取消';
+      inner.appendChild(el);
     });
 
     inner.style.width = (cols * colW) + 'px';
@@ -512,6 +547,12 @@
   });
 
   inner.addEventListener('click', e => {
+    // Ctrl / ⌘ + 左键：在任意音高上加断句（不会写音符，也不影响演奏）
+    if (e.ctrlKey || e.metaKey) {
+      const c = cellAt(e);
+      if (c) toggleBreak(c.col, ROWS[c.row].midi);
+      return;
+    }
     if (e.target.closest('.blk')) return;          // 音符块自己处理
     const c = cellAt(e);
     if (!c) return;
@@ -519,8 +560,23 @@
     ghost.classList.remove('on');
   });
 
-  // 卷内不弹浏览器右键菜单（右键删音符由块自身处理）
-  inner.addEventListener('contextmenu', e => e.preventDefault());
+  // 卷内右键：有断句就取消断句（优先），否则交给音符块自己删音符
+  inner.addEventListener('contextmenu', e => {
+    const c = cellAt(e);
+    if (c) {
+      const i = breaks.findIndex(b => b.col === c.col);
+      if (i >= 0) {
+        e.preventDefault();
+        e.stopPropagation();
+        snapshot();
+        breaks.splice(i, 1);
+        render();
+        toast('已取消第 ' + (c.col + 1) + ' 格的断句');
+        return;
+      }
+    }
+    e.preventDefault();
+  }, true);
 
   // 滚轮：上下滚 → 左右滚；滚到两端时把滚动交还给页面
   rollEl.addEventListener('wheel', e => {
@@ -557,15 +613,17 @@
     if (!undoStack.length) { toast('没有可撤销的操作'); return; }
     const st = undoStack.pop();
     notes = st.notes;
+    if (Array.isArray(st.breaks)) breaks = st.breaks;
     cols = st.cols;
     render();
   });
 
   $('btnClear').addEventListener('click', () => {
-    if (!notes.length) { toast('已经是空的了'); return; }
+    if (!notes.length && !breaks.length) { toast('已经是空的了'); return; }
     stopPlay();
     snapshot();
     notes = [];
+    breaks = [];
     cols = COLS_UNIT;
     playStart = 0;
     render();
@@ -760,10 +818,16 @@
       });
       if (!out.length) return { ok: false, error: 'JSON 里没有可用音符（音高需在 C5–E6 之间）' };
       const maxCol = Math.max.apply(null, out.map(o => o.col));
+      const rawBreaks = Array.isArray(obj && obj.breaks) ? obj.breaks : [];
+      const parsedBreaks = rawBreaks
+        .filter(b => b && isFinite(Number(b.col)) && Number(b.col) >= 0)
+        .map(b => ({ col: Math.floor(Number(b.col)), midi: Number(b.midi) || 81 }));
+
       return {
         ok: true, kind: 'json', notes: dedupe(out),
         cols: Math.max(COLS_UNIT, Number(obj && obj.cols) || 0, maxCol + 1),
-        timing: (obj && obj.timing && typeof obj.timing === 'object') ? obj.timing : null
+        timing: (obj && obj.timing && typeof obj.timing === 'object') ? obj.timing : null,
+        breaks: parsedBreaks
       };
     }
 
@@ -797,6 +861,15 @@
     }));
     notes = append ? notes.concat(list) : list;
 
+    if (Array.isArray(parsed.breaks)) {
+      const shifted = parsed.breaks.map(b => ({ col: b.col + base, midi: b.midi }));
+      breaks = append
+        ? breaks.concat(shifted.filter(b => !breaks.some(x => x.col === b.col)))
+        : shifted;
+    } else if (!append) {
+      breaks = [];
+    }
+
     const maxEnd = notes.length ? Math.max.apply(null, notes.map(n => n.col + (n.len || 1))) : 0;
     const need = Math.ceil(maxEnd / COLS_UNIT) * COLS_UNIT;
     let target = Math.max(COLS_UNIT, need);
@@ -815,6 +888,10 @@
 
     render();
     if (maxEnd > 0) revealCol(Math.max(0, maxEnd - 1));
+
+    // 如果此刻正停在「仅按键谱」页，导入后立刻同步
+    const buttonsView = document.querySelector('.view[data-view="buttons"]');
+    if (buttonsView && !buttonsView.hidden) renderKeys();
   }
 
   const modal = $('modal');
@@ -1036,6 +1113,7 @@
       cols: cols,
       count: ordered.length,
       timing: { bpm: bpm, gridFactor: gridFactor, defaultLen: defaultLen },
+      breaks: breaks.map(b => ({ col: b.col, midi: b.midi })),
       notes: ordered.map(n => ({ col: n.col, len: n.len || 1, midi: n.midi, name: byMidi.get(n.midi).name, keys: n.mapping }))
     };
     try {
@@ -1098,12 +1176,17 @@
     }
     if (name === 'device') refreshPorts();
     if (name === 'flash') { loadFirmwareInfo(); refreshFwPorts(); }
+    if (name === 'buttons') renderKeys();
+    if (name === 'scores' && !scoreLoaded) loadScores(false);
     if (name === 'about') loadAbout();
   }
   if (tabbar) {
     tabbar.addEventListener('click', e => {
       const btn = e.target.closest('.tabBtn');
-      if (btn) showView(btn.dataset.view);
+      if (btn) {
+        if (btn.dataset.view !== 'buttons') stopKeysPlay();
+        showView(btn.dataset.view);
+      }
     });
   }
 
@@ -1507,6 +1590,602 @@
   // 启动时先把串口列表拉好，曲谱页的「演奏」直接可用
   refreshPorts();
 
+  /* ---------------- 仅按键谱 ---------------- */
+  const keysWrapEl = document.getElementById('keysWrap');
+  const keysMetaEl = document.getElementById('keysMeta');
+  const keysEmptyEl = document.getElementById('keysEmpty');
+  const keysPlayBtn = document.getElementById('keysPlay');
+  const keyCellMap = new Map();
+  let keysTimers = [];
+  let keysPlaying = false;
+
+  // 图标拆成「viewBox + 内容」，页面里包成 <svg>，导出时贴进大 SVG 里复用
+  function iconParts(kind) {
+    const ring = '<circle cx="16" cy="16" r="13.6" fill="none" stroke="currentColor" stroke-width="2"/>';
+    const up = '<path d="M16 21.5V11.5M12 15.5L16 11.5L20 15.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>';
+    const down = '<path d="M16 10.5V20.5M12 16.5L16 20.5L20 16.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>';
+
+    if (kind === 'L' || kind === 'R') {
+      return {
+        vb: '0 0 32 32',
+        inner: '<rect x="2.5" y="8.5" width="27" height="15" rx="6" fill="none" stroke="currentColor" stroke-width="2"/>' +
+          '<text x="16" y="20.4" text-anchor="middle" font-size="12" font-weight="700" fill="currentColor">' + kind + '</text>'
+      };
+    }
+
+    if (kind === 'stick-up' || kind === 'stick-down') {
+      const stickRing = '<circle cx="15" cy="16" r="13.6" fill="none" stroke="currentColor" stroke-width="2"/>';
+      const stickL = '<text x="15" y="21" text-anchor="middle" font-size="13" font-weight="700" fill="currentColor">L</text>';
+      const stickUp = '<path d="M39.5 24V8.5M35.9 12L39.5 8.4L43.1 12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>';
+      const stickDown = '<path d="M39.5 8V23.5M35.9 20L39.5 23.6L43.1 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>';
+      return { vb: '0 0 48 32', inner: stickRing + stickL + (kind === 'stick-up' ? stickUp : stickDown) };
+    }
+
+    if (kind === 'dpad-up' || kind === 'dpad-down') {
+      return { vb: '0 0 32 32', inner: ring + (kind === 'dpad-up' ? up : down) };
+    }
+
+    const letter = String(kind || '').slice(0, 1).toUpperCase();
+    return {
+      vb: '0 0 32 32',
+      inner: ring + '<text x="16" y="21" text-anchor="middle" font-size="13" font-weight="700" fill="currentColor">' + letter + '</text>'
+    };
+  }
+
+  function iconMarkup(kind) {
+    const p = iconParts(kind);
+    const stick = kind === 'stick-up' || kind === 'stick-down';
+    return '<svg viewBox="' + p.vb + '" class="keyIcon' + (stick ? ' keyIcon-stick' : '') + '">' + p.inner + '</svg>';
+  }
+
+  // "摇杆下+L" -> ['stick-down', 'L']；"下+A" -> ['dpad-down', 'A']；"L" -> ['L']
+  function keyKinds(label) {
+    let rest = String(label || '').trim();
+    const kinds = [];
+
+    if (rest.indexOf('摇杆下+') === 0) { kinds.push('stick-down'); rest = rest.slice(4); }
+    else if (rest.indexOf('摇杆上+') === 0) { kinds.push('stick-up'); rest = rest.slice(4); }
+    else if (rest.indexOf('下+') === 0) { kinds.push('dpad-down'); rest = rest.slice(2); }
+    else if (rest.indexOf('上+') === 0) { kinds.push('dpad-up'); rest = rest.slice(2); }
+
+    rest = rest.trim();
+    if (rest && rest.toUpperCase() !== 'B') kinds.push(rest);
+    return kinds;
+  }
+
+  const KEYS_PER_LINE = 8;
+
+  // 把音符按断句分成若干句；句内连续的音紧挨着排，中间有空档就插一个固定间隔
+  function phraseItems(list) {
+    const breakCols = [];
+    breaks.forEach(function (b) {
+      if (typeof b.col === 'number' && breakCols.indexOf(b.col) < 0) breakCols.push(b.col);
+    });
+    breakCols.sort(function (a, b) { return a - b; });
+
+    const phraseOf = function (n) {
+      let k = 0;
+      for (let i = 0; i < breakCols.length; i += 1) {
+        if (n.col > breakCols[i]) k += 1;
+        else break;
+      }
+      return k;
+    };
+
+    const maxPhrase = list.length === 0
+      ? -1
+      : list.reduce(function (m, n) { return Math.max(m, phraseOf(n)); }, 0);
+
+    const phrases = [];
+
+    for (let ph = 0; ph <= maxPhrase; ph += 1) {
+      const inPhrase = list
+        .filter(function (n) { return phraseOf(n) === ph; })
+        .sort(function (a, b) { return (a.col - b.col) || (a.id - b.id); });
+
+      if (!inPhrase.length) continue;
+
+      const items = [];
+      inPhrase.forEach(function (n, i) {
+        if (i > 0) {
+          const prev = inPhrase[i - 1];
+          if (n.col > prev.col + (prev.len || 1)) items.push({ kind: 'gap' });
+        }
+        items.push({ kind: 'note', note: n });
+      });
+
+      phrases.push(items);
+    }
+
+    return phrases;
+  }
+
+  function renderKeys() {
+    if (!keysWrapEl) return;
+
+    const list = sortedNotes();
+    keysWrapEl.textContent = '';
+    keyCellMap.clear();
+
+    if (keysEmptyEl) keysEmptyEl.hidden = list.length > 0;
+
+    if (keysMetaEl) {
+      keysMetaEl.textContent = list.length
+        ? list.length + ' 个音' + (breaks.length ? ' · ' + breaks.length + ' 处断句' : '')
+        : '';
+    }
+
+    if (!list.length) return;
+
+    phraseItems(list).forEach(function (items, pi) {
+      const row = document.createElement('div');
+      row.className = 'keyPhrase' + (pi > 0 ? ' sep' : '');
+
+      items.forEach(function (item) {
+        if (item.kind === 'gap') {
+          const gap = document.createElement('span');
+          gap.className = 'keyGap';
+          row.appendChild(gap);
+          return;
+        }
+
+        const n = item.note;
+        const box = document.createElement('div');
+        box.className = 'keyBox';
+        box.dataset.noteId = String(n.id);
+
+        keyKinds(n.mapping).forEach(function (kind, index) {
+          if (index > 0) {
+            const plus = document.createElement('span');
+            plus.className = 'keyPlus';
+            plus.textContent = '+';
+            box.appendChild(plus);
+          }
+          box.insertAdjacentHTML('beforeend', iconMarkup(kind));
+        });
+
+        keyCellMap.set(n.id, box);
+        row.appendChild(box);
+      });
+
+      keysWrapEl.appendChild(row);
+    });
+  }
+
+
+  /* ---------------- 仅按键谱：试听 ---------------- */
+  function stopKeysPlay() {
+    keysTimers.forEach(clearTimeout);
+    keysTimers = [];
+    keysPlaying = false;
+    Array.prototype.forEach.call(document.querySelectorAll('.keyBox.playing'),
+      function (el) { el.classList.remove('playing'); });
+    if (keysPlayBtn) keysPlayBtn.textContent = '▶ 试听';
+  }
+
+  function startKeysPlay() {
+    if (keysPlaying) { stopKeysPlay(); return; }
+
+    const list = sortedNotes();
+    if (!list.length) { toast('还没有音符'); return; }
+
+    const step = stepMs();
+    keysPlaying = true;
+    if (keysPlayBtn) keysPlayBtn.textContent = '■ 停止';
+
+    list.forEach(function (n) {
+      keysTimers.push(setTimeout(function () {
+        tone(n.midi, Math.max(0.15, noteHoldMs(n.len || 1) / 1000));
+        Array.prototype.forEach.call(document.querySelectorAll('.keyBox.playing'),
+          function (el) { el.classList.remove('playing'); });
+
+        const cell = keyCellMap.get(n.id);
+        if (cell) {
+          cell.classList.add('playing');
+          centerInKeysSheet(cell);
+        }
+      }, n.col * step));
+    });
+
+    const last = list[list.length - 1];
+    keysTimers.push(setTimeout(stopKeysPlay, last.col * step + noteHoldMs(last.len || 1) + 200));
+  }
+
+  // 试听时让当前音停在可见区域的中间（谱面区自己会滚，整页也可能需要滚）
+  function centerInKeysSheet(el) {
+    const sheet = el.closest ? el.closest('.keysSheet') : null;
+
+    if (sheet && sheet.scrollHeight > sheet.clientHeight + 4) {
+      const boxRect = el.getBoundingClientRect();
+      const sheetRect = sheet.getBoundingClientRect();
+      const delta = (boxRect.top + boxRect.height / 2) - (sheetRect.top + sheetRect.height / 2);
+      sheet.scrollTo({ top: Math.max(0, sheet.scrollTop + delta), behavior: 'smooth' });
+      return;
+    }
+
+    const rect = el.getBoundingClientRect();
+    const target = window.scrollY + rect.top + rect.height / 2 - window.innerHeight / 2;
+    window.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
+  }
+
+  // 试听时点谱面任意位置都能打断（按钮滚出视野后也能停）
+  if (keysWrapEl) {
+    keysWrapEl.addEventListener('click', function () {
+      if (keysPlaying) stopKeysPlay();
+    });
+  }
+
+  if (keysPlayBtn) keysPlayBtn.addEventListener('click', startKeysPlay);
+
+  /* ---------------- 仅按键谱：导出 ---------------- */
+  function r2(value) { return Math.round(value * 100) / 100; }
+
+  // 把当前谱面画成一张浅色 SVG（图片和 PDF 都用它）
+  // 把当前谱面画成一张浅色 SVG（导出图片 / 打印 PDF 都用它）
+  function buildKeysSheetSvg() {
+    const PAD = 30, LINE_H = 78, BOX_H = 56, BOX_PAD = 12;
+    const ICON = 40, STICK_W = 60, PLUS_W = 16, ICON_GAP = 3;
+    const GAP_NOTE = 10;       // 相邻两个音之间
+    const GAP_REST = 36;       // 中间有休止时的固定空档
+    const MAX_W = 1180;        // 一行最宽多少
+    const PHRASE_GAP = 26;
+
+    const phrases = phraseItems(sortedNotes());
+
+    const boxWidth = function (item) {
+      const kinds = keyKinds(item.note.mapping);
+      let w = BOX_PAD * 2;
+      kinds.forEach(function (k, i) {
+        w += (k.indexOf('stick') === 0 ? STICK_W : ICON);
+        if (i > 0) w += PLUS_W + ICON_GAP * 2;
+      });
+      return w;
+    };
+
+    const lines = [];
+
+    phrases.forEach(function (items, pi) {
+      let line = { items: [], width: 0, newPhrase: pi > 0 };
+
+      items.forEach(function (item) {
+        const w = item.kind === 'gap' ? GAP_REST : boxWidth(item);
+        const extra = line.items.length ? GAP_NOTE : 0;
+
+        if (line.items.length && line.width + extra + w > MAX_W) {
+          lines.push(line);
+          line = { items: [], width: 0, newPhrase: false };
+        }
+
+        const x = line.width + (line.items.length ? GAP_NOTE : 0);
+        line.items.push({ item: item, x: x, w: w });
+        line.width = x + w;
+      });
+
+      if (line.items.length) lines.push(line);
+    });
+
+    const width = MAX_W + PAD * 2;
+    const body = [];
+    let y = PAD;
+
+    lines.forEach(function (line) {
+      // 每行居中
+      const lineOffset = Math.max(0, (MAX_W - line.width) / 2);
+
+      if (line.newPhrase) {
+        y += PHRASE_GAP;
+        body.push('<line x1="' + PAD + '" y1="' + r2(y - PHRASE_GAP / 2) + '" x2="' + r2(width - PAD) +
+          '" y2="' + r2(y - PHRASE_GAP / 2) + '" stroke="#b9c9c6" stroke-width="1" stroke-dasharray="6 6"/>');
+      }
+
+      line.items.forEach(function (entry) {
+        if (entry.item.kind === 'gap') return;
+
+        const n = entry.item.note;
+        const boxX = PAD + lineOffset + entry.x;
+        const boxY = y + (LINE_H - BOX_H) / 2;
+
+        body.push('<rect x="' + r2(boxX) + '" y="' + r2(boxY) + '" width="' + r2(entry.w) + '" height="' + BOX_H +
+          '" rx="12" fill="#ffffff" stroke="#d5c8a2" stroke-width="1.5"/>');
+
+        let ix = boxX + BOX_PAD;
+
+        keyKinds(n.mapping).forEach(function (kind, index) {
+          if (index > 0) {
+            body.push('<text x="' + r2(ix + PLUS_W / 2) + '" y="' + r2(boxY + BOX_H / 2 + 7) +
+              '" text-anchor="middle" font-size="20" font-weight="700" fill="#93825a">+</text>');
+            ix += PLUS_W + ICON_GAP * 2;
+          }
+
+          const parts = iconParts(kind);
+          const w = kind.indexOf('stick') === 0 ? STICK_W : ICON;
+          const vbw = Number(parts.vb.split(' ')[2]);
+          const scale = w / vbw;
+          const h = 32 * scale;
+
+          body.push('<g transform="translate(' + r2(ix) + ',' + r2(boxY + (BOX_H - h) / 2) + ') scale(' +
+            r2(scale) + ')" color="#3f3f3f">' + parts.inner + '</g>');
+
+          ix += w + ICON_GAP;
+        });
+      });
+
+      y += LINE_H;
+    });
+
+    const height = y + PAD;
+
+    return '<svg xmlns="http://www.w3.org/2000/svg" width="' + r2(width) + '" height="' + r2(height) +
+      '" viewBox="0 0 ' + r2(width) + ' ' + r2(height) + '">' +
+      '<rect width="100%" height="100%" fill="#ffffff"/>' + body.join('') + '</svg>';
+  }
+
+  function exportKeysPng() {
+    if (!notes.length) { toast('还没有音符'); return; }
+
+    const svg = buildKeysSheetSvg();
+    const img = new Image();
+
+    img.onload = function () {
+      const scale = 2;
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.naturalWidth * scale);
+      canvas.height = Math.round(img.naturalHeight * scale);
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+      canvas.toBlob(function (blob) {
+        if (!blob) { toast('导出失败'); return; }
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = '按键谱_' + stamp() + '.png';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(function () { URL.revokeObjectURL(url); a.remove(); }, 1200);
+        toast('已导出图片');
+      }, 'image/png');
+    };
+
+    img.onerror = function () { toast('导出失败：图片生成出错'); };
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+  }
+
+  async function exportKeysPdf() {
+    if (!notes.length) { toast('还没有音符'); return; }
+
+    stopKeysPlay();
+    document.body.classList.add('printing-keys');
+
+    try {
+      const api = window.friendMakerWindow;
+
+      if (api && typeof api.exportPdf === 'function') {
+        // 主进程 printToPDF → 直接写文件，不走打印对话框
+        const result = await api.exportPdf('按键谱_' + stamp() + '.pdf');
+
+        if (result && result.ok) {
+          toast('已导出 PDF');
+        } else if (!result || !result.canceled) {
+          toast('导出失败：' + ((result && result.error) || '未知错误'));
+        }
+      } else {
+        // 非 Electron 环境（比如直接用浏览器打开）退回打印
+        window.print();
+      }
+    } catch (e) {
+      toast('导出失败：' + e.message);
+    } finally {
+      document.body.classList.remove('printing-keys');
+    }
+  }
+
+  // 打印时临时给 body 打标记，打印结束再摘掉（Electron / 浏览器都支持这两个事件）
+  window.addEventListener('beforeprint', function () { document.body.classList.add('printing-keys'); });
+  window.addEventListener('afterprint', function () { document.body.classList.remove('printing-keys'); });
+
+  const keysPngBtn = document.getElementById('keysPng');
+  const keysPdfBtn = document.getElementById('keysPdf');
+  if (keysPngBtn) keysPngBtn.addEventListener('click', exportKeysPng);
+  if (keysPdfBtn) keysPdfBtn.addEventListener('click', exportKeysPdf);
+
+  /* ---------------- 谱面库 ---------------- */
+  const scoreListEl = document.getElementById('scoreList');
+  const scoreStatusEl = document.getElementById('scoreStatus');
+  const scoreSearchEl = document.getElementById('scoreSearch');
+  const scoreRefreshEl = document.getElementById('scoreRefresh');
+  const scoreModalEl = document.getElementById('scoreModal');
+  const scoreModalTitleEl = document.getElementById('scoreModalTitle');
+  const scoreModalMetaEl = document.getElementById('scoreModalMeta');
+  let scoreEntries = [];
+  let scoreLoaded = false;
+  let scoreBusy = false;
+  let activeScore = null;
+  let scoreError = '';
+
+  function safeFileName(title, author) {
+    return ((title || '谱面') + (author ? '_' + author : '')).replace(/[\\/:*?"<>|]/g, '_').slice(0, 80);
+  }
+
+  function renderScores() {
+    if (!scoreListEl) return;
+    const q = ((scoreSearchEl && scoreSearchEl.value) || '').trim().toLowerCase();
+    const list = scoreEntries.filter(function (s) {
+      if (!q) return true;
+      return String(s.title || '').toLowerCase().indexOf(q) >= 0 ||
+        String(s.author || '').toLowerCase().indexOf(q) >= 0;
+    });
+
+    scoreListEl.textContent = '';
+
+    if (!list.length) {
+      const empty = document.createElement('div');
+      empty.className = 'scoreEmpty' + (scoreError ? ' error' : '');
+      empty.textContent = scoreError
+        ? scoreError
+        : (scoreEntries.length ? '没有匹配的谱面' : '谱面库还是空的');
+      scoreListEl.appendChild(empty);
+      return;
+    }
+
+    list.forEach(function (s) {
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'scoreRow';
+
+      const title = document.createElement('span');
+      title.className = 'scoreTitle';
+      title.textContent = s.title || '(无标题)';
+
+      const author = document.createElement('span');
+      author.className = 'scoreAuthor';
+      author.textContent = s.author || '未知作者';
+
+      const count = document.createElement('span');
+      count.className = 'scoreNotes';
+      count.textContent = s.notes ? s.notes + ' 音' : '';
+
+      row.appendChild(title);
+      row.appendChild(author);
+      row.appendChild(count);
+      row.addEventListener('click', function () { openScoreModal(s); });
+      scoreListEl.appendChild(row);
+    });
+  }
+
+  async function loadScores(force, silent) {
+    if (scoreBusy) return;
+    scoreBusy = true;
+    if (scoreStatusEl) scoreStatusEl.textContent = '读取中…';
+
+    try {
+      const data = await devApi('/api/scores' + (force ? '?force=1' : ''));
+
+      if (!data || data.ok === false) {
+        scoreEntries = [];
+        // 启动时静默失败的话，留一次机会给「打开页签/点刷新」重试
+        scoreLoaded = !silent;
+        scoreError = '网络问题，暂时读不到谱面库（' + ((data && data.error) || '未知错误') + '）· 点「刷新」重试';
+        if (scoreStatusEl) scoreStatusEl.textContent = '读取失败';
+        renderScores();
+        if (!silent) toast('谱面库读取失败：' + ((data && data.error) || '未知错误'));
+        return;
+      }
+
+      scoreEntries = Array.isArray(data.scores) ? data.scores : [];
+      scoreLoaded = true;
+      scoreError = '';
+      if (scoreStatusEl) {
+        const label = String(data.source || '');
+        const from = label === 'GitHub API' ? 'GitHub'
+          : label.indexOf('jsdelivr') >= 0 ? 'CDN'
+            : label.indexOf('raw.githubusercontent') >= 0 ? 'raw'
+              : '';
+        scoreStatusEl.textContent = '共 ' + scoreEntries.length + ' 首' + (from ? ' · ' + from : '');
+      }
+      renderScores();
+    } catch (e) {
+      scoreEntries = [];
+      scoreError = '网络问题，暂时读不到谱面库（' + e.message + '）· 点「刷新」重试';
+      if (scoreStatusEl) scoreStatusEl.textContent = '读取失败';
+      renderScores();
+      if (!silent) toast('谱面库读取失败：' + e.message);
+    } finally {
+      scoreBusy = false;
+    }
+  }
+
+  async function fetchScoreJson(entry) {
+    const res = await fetch('/api/scores/file?id=' + encodeURIComponent(entry.id));
+    const text = await res.text();
+    let data = null;
+    try { data = JSON.parse(text); } catch (e) { data = null; }
+    if (!data) throw new Error('谱面文件不是合法 JSON');
+    if (data.ok === false) throw new Error(data.error || '读取失败');
+    return { text: text, data: data };
+  }
+
+  function openScoreModal(entry) {
+    activeScore = entry;
+    if (scoreModalTitleEl) scoreModalTitleEl.textContent = entry.title || '谱面';
+    if (scoreModalMetaEl) {
+      scoreModalMetaEl.textContent = '作者：' + (entry.author || '未知作者') +
+        (entry.notes ? ' · 共 ' + entry.notes + ' 个音' : '');
+    }
+    if (scoreModalEl) {
+      scoreModalEl.classList.add('on');
+      scoreModalEl.setAttribute('aria-hidden', 'false');
+    }
+  }
+
+  function closeScoreModal() {
+    if (scoreModalEl) {
+      scoreModalEl.classList.remove('on');
+      scoreModalEl.setAttribute('aria-hidden', 'true');
+    }
+    activeScore = null;
+  }
+
+  async function downloadScore() {
+    if (!activeScore) return;
+    const title = activeScore.title || '谱面';
+    try {
+      const r = await fetchScoreJson(activeScore);
+      const blob = new Blob([r.text], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = safeFileName(activeScore.title, activeScore.author) + '.json';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1200);
+      closeScoreModal();
+      toast('已保存「' + title + '」');
+    } catch (e) {
+      toast('下载失败：' + e.message);
+    }
+  }
+
+  async function sendScoreToEditor() {
+    if (!activeScore) return;
+    const title = activeScore.title || '谱面';
+
+    if (notes.length && !window.confirm('当前谱面会被替换，继续？')) return;
+
+    try {
+      const r = await fetchScoreJson(activeScore);
+      const parsed = parseSequence(JSON.stringify(r.data));
+      if (!parsed.ok) { toast('谱面解析失败：' + parsed.error); return; }
+      applyImport(parsed, false);
+      closeScoreModal();
+      showView('score');
+      toast('已载入「' + title + '」');
+    } catch (e) {
+      toast('载入失败：' + e.message);
+    }
+  }
+
+  if (scoreRefreshEl) scoreRefreshEl.addEventListener('click', function () { loadScores(true); });
+  if (scoreSearchEl) scoreSearchEl.addEventListener('input', renderScores);
+  if (scoreModalEl) {
+    scoreModalEl.addEventListener('click', function (e) {
+      if (e.target === scoreModalEl) closeScoreModal();
+    });
+  }
+
+  const scoreModalCloseEl = document.getElementById('scoreModalClose');
+  const scoreDownloadEl = document.getElementById('scoreDownload');
+  const scoreSendEl = document.getElementById('scoreSend');
+  if (scoreModalCloseEl) scoreModalCloseEl.addEventListener('click', closeScoreModal);
+  if (scoreDownloadEl) scoreDownloadEl.addEventListener('click', downloadScore);
+  if (scoreSendEl) scoreSendEl.addEventListener('click', sendScoreToEditor);
+
+  // 启动时就静默拉一遍谱面库（带时间戳绕过 CDN 缓存），打开页签时已经是最新的
+  window.setTimeout(function () {
+    loadScores(true, true);
+  }, 2000);
+
   /* ---------------- 关于页 ---------------- */
   const aboutVersionEl = document.getElementById('aboutVersion');
   const aboutVersionBadge = document.getElementById('aboutVersionBadge');
@@ -1659,6 +2338,7 @@
     importMidi: function (buf) { importMidi(buf); },
     getNotes: function () { return notes.map(function (n) { return { midi: n.midi, col: n.col, len: n.len || 1, mapping: n.mapping }; }); },
     getState: function () { return { cols: cols, bpm: bpm, gridFactor: gridFactor, defaultLen: defaultLen, playStart: playStart }; },
-    getCommands: function () { return buildCommands().lines.map(function (l) { return l.text; }); }
+    getCommands: function () { return buildCommands().lines.map(function (l) { return l.text; }); },
+    buildKeysSvg: function () { return buildKeysSheetSvg(); }
   };
 })();

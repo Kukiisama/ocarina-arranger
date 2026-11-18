@@ -295,6 +295,43 @@ if (!hasLock) {
     getWindowFromSender(event)?.close();
   });
 
+  // 按键谱导出 PDF：主进程直接生成并写文件，不弹打印对话框
+  ipcMain.handle("ocarina:export-pdf", async (event, defaultFileName: unknown) => {
+    const window = getWindowFromSender(event);
+
+    if (!window) {
+      return { ok: false, error: "窗口不存在" };
+    }
+
+    try {
+      const pdf = await window.webContents.printToPDF({
+        landscape: true,
+        printBackground: true,
+        pageSize: "A4",
+      });
+
+      const suggested =
+        typeof defaultFileName === "string" && defaultFileName.trim()
+          ? defaultFileName
+          : "按键谱.pdf";
+
+      const result = await dialog.showSaveDialog(window, {
+        title: "导出按键谱 PDF",
+        defaultPath: suggested,
+        filters: [{ name: "PDF", extensions: ["pdf"] }],
+      });
+
+      if (result.canceled || !result.filePath) {
+        return { ok: false, canceled: true };
+      }
+
+      await writeFile(result.filePath, pdf);
+      return { ok: true, filePath: result.filePath };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
   app.on("second-instance", () => {
     if (!mainWindow) {
       return;

@@ -23,14 +23,16 @@
       <span class="tsep"></span>
       <button class="tool" id="btnCopy" title="复制整条键位序列">⧉ 复制</button>
       <button class="tool" id="btnPaste" title="粘贴序列（键位链 / 音名 / JSON）">📋 粘贴</button>
-      <button class="tool" id="btnExport" title="导出乐谱文件">⇩ 导出</button>
-      <button class="tool" id="btnImport" title="导入乐谱（JSON / 文本 / MIDI）">⇧ 导入</button>
+      <button class="tool" id="btnExport" title="导出乐谱文件">⇧ 导出</button>
+      <button class="tool" id="btnImport" title="导入乐谱（JSON / 文本 / MIDI）">⇩ 导入</button>
       <input type="file" id="fileInput" accept=".json,.txt,.mid,.midi,application/json,text/plain,audio/midi" hidden />
     </div>
   </header>
 
   <nav class="tabbar" id="tabbar">
     <button class="tabBtn on" data-view="score">曲谱编排</button>
+    <button class="tabBtn" data-view="buttons">仅按键谱</button>
+    <button class="tabBtn" data-view="scores">谱面库</button>
     <button class="tabBtn" data-view="device">设备与测试</button>
     <button class="tabBtn" data-view="flash">固件刷入</button>
     <button class="tabBtn" data-view="about">关于<span class="tabDot" id="aboutDot" hidden></span></button>
@@ -105,6 +107,40 @@
   <div class="footerNote">
     电脑键盘试听：A W S E D F T G Y H U J K O L P ;（由低到高）　·　Home 回到第 1 列　·　钢琴卷：左键写音符、右键删音符、滚轮左右滚动、写满第 16 列自动再加 16 格　·　同一音有两种按法时，点输出面板里的键位可切换
   </div>
+  </section>
+
+  <section class="view" data-view="buttons" hidden>
+    <div class="deviceCard">
+      <div class="deviceHead">
+        <span>仅按键谱</span>
+        <span class="devHint" id="keysMeta"></span>
+      </div>
+      <div class="deviceRow">
+        <button class="tool on" id="keysPlay" type="button">▶ 试听</button>
+        <button class="tool" id="keysPng" type="button">导出图片</button>
+        <button class="tool" id="keysPdf" type="button">导出 PDF</button>
+        <span class="devHint">连续的音紧挨着排 · 中间有休止才留一个空档 · 乐句之间用断句分开</span>
+      </div>
+      <div class="keysSheet">
+        <div class="keysWrap" id="keysWrap"></div>
+      </div>
+      <p class="deviceHint" id="keysEmpty">还没有音符。先去「曲谱编排」写几个音，或者从「谱面库」载入一首。</p>
+    </div>
+  </section>
+
+  <section class="view" data-view="scores" hidden>
+    <div class="deviceCard">
+      <div class="deviceHead">
+        <span>谱面库</span>
+        <span class="devStatus" id="scoreStatus">未加载</span>
+      </div>
+      <div class="deviceRow">
+        <input id="scoreSearch" class="scoreSearch" type="search" placeholder="搜索标题或作者…" autocomplete="off" />
+        <button class="tool" id="scoreRefresh" type="button">刷新</button>
+      </div>
+      <div class="scoreList" id="scoreList"></div>
+      <p class="deviceHint" id="scoreHint">谱面由 Kukiisama 整理。想投稿的话把谱面文件发给作者，听完觉得合适就会放上来。</p>
+    </div>
   </section>
 
   <section class="view" data-view="device" hidden>
@@ -244,6 +280,21 @@
     <div class="modalFoot">
       <button class="tool" id="modalCancel">取消</button>
       <button class="tool on" id="modalOk" disabled>导入并替换</button>
+    </div>
+  </div>
+</div>
+
+<!-- 谱面库：选中后的操作弹窗 -->
+<div class="modal" id="scoreModal" aria-hidden="true">
+  <div class="modalBox scoreModalBox">
+    <div class="modalHead">
+      <span id="scoreModalTitle">谱面</span>
+      <button class="modalX" id="scoreModalClose" title="关闭">×</button>
+    </div>
+    <p class="scoreModalMeta" id="scoreModalMeta">—</p>
+    <div class="modalFoot">
+      <button class="tool" id="scoreDownload" type="button">下载到本地</button>
+      <button class="tool on" id="scoreSend" type="button">发送到编辑器</button>
     </div>
   </div>
 </div>
