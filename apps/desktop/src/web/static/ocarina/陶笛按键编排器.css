@@ -404,3 +404,7 @@
 .clKind.fix{background:rgba(224,87,76,.16);color:#e08b84}
 .clKind.improve{background:rgba(232,196,106,.15);color:#e8c46a}
 .clKind.note{background:rgba(139,152,171,.16);color:#9fb0c4}
+
+/* ---------- 跟拍按钮 ---------- */
+.tool.tap{min-width:62px}
+.tool.tap.tapping{background:linear-gradient(180deg,#f2d891,#d9af50);border-color:#e8c46a;color:#0d1218;font-weight:600;transform:translateY(1px)}

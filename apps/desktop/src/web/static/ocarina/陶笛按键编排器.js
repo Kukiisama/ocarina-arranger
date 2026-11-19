@@ -679,6 +679,67 @@
   gridEl.addEventListener('change', applyTiming);
   if (lenEl) lenEl.addEventListener('change', applyTiming);
 
+  /* ---------------- 跟拍（Tap Tempo） ---------------- */
+  const tapBtn = $('btnTapTempo');
+  const tapHintEl = $('tapHint');
+
+  let tapTimes = [];
+  let tapResetTimer = null;
+
+  function resetTapTempo() {
+    tapTimes = [];
+    if (tapHintEl) tapHintEl.textContent = '';
+    if (tapBtn) tapBtn.classList.remove('tapping');
+  }
+
+  function handleTapTempo() {
+    const now = performance.now();
+    const gap = tapTimes.length ? now - tapTimes[tapTimes.length - 1] : Infinity;
+
+    // 停了两秒以上，当成重新开始跟
+    if (gap > 2000) {
+      tapTimes = [];
+    }
+
+    tapTimes.push(now);
+    if (tapTimes.length > 8) {
+      tapTimes.shift();
+    }
+
+    if (tapBtn) {
+      tapBtn.classList.add('tapping');
+      window.setTimeout(function () {
+        if (tapBtn) tapBtn.classList.remove('tapping');
+      }, 90);
+    }
+
+    if (tapTimes.length >= 2) {
+      const gaps = [];
+      for (let i = 1; i < tapTimes.length; i += 1) {
+        gaps.push(tapTimes[i] - tapTimes[i - 1]);
+      }
+
+      // 只用最近 4 个间隔，取平均，避免一次手抖带偏
+      const recent = gaps.slice(-4);
+      const average = recent.reduce(function (sum, value) { return sum + value; }, 0) / recent.length;
+
+      if (average > 0) {
+        const next = Math.max(30, Math.min(300, Math.round(60000 / average)));
+        bpm = next;
+        bpmEl.value = String(next);
+        render();
+        if (tapHintEl) tapHintEl.textContent = '跟拍 ' + tapTimes.length + ' 拍 → ' + next + ' BPM';
+      }
+    } else if (tapHintEl) {
+      tapHintEl.textContent = '跟拍中，再点几下…';
+    }
+
+    if (tapResetTimer) clearTimeout(tapResetTimer);
+    tapResetTimer = window.setTimeout(resetTapTempo, 3000);
+  }
+
+  if (tapBtn) tapBtn.addEventListener('click', handleTapTempo);
+
   $('panelTabs').addEventListener('click', e => {
     const btn = e.target.closest('.seg-btn');
     if (!btn) return;
